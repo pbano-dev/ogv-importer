@@ -1,0 +1,46 @@
+{
+  "active_steam_api_candidates": [
+    {
+      "path": "03_PARCHES_APLICADOS/goldberg_gbe_fork/steam_api64.dll",
+      "sha256": "cf61e505e63852b24aefb9d9d0712bc1ae45921c7c3a0c01abb1dc0c95c8ca01"
+    }
+  ],
+  "appmanifests": [
+    {
+      "path": "04_NOTAS_TECNICAS/appmanifest_2622380.acf",
+      "sha256": "7b2c26e379771ba52a0a5b5c8130ec4ab88836536be7ceff720e0495f60980e2"
+    }
+  ],
+  "entry_count": 44313,
+  "file_count": 39183,
+  "game_archives": [
+    {
+      "path": "01_JUGAR/backup_EldenRing-Nightreign.tar.gz",
+      "sha256": "bcd3ba8804094284fa0c15890e2b1f1c04c2f5f0ebfdff4843e159e85e7f05e5"
+    }
+  ],
+  "hashed_file_count": 39183,
+  "missing_required_entries": [],
+  "modules": {
+    "eac_launcher_omission": true,
+    "input": true,
+    "steamless": false,
+    "supplemental_content": true
+  },
+  "runner_archives": [
+    {
+      "path": "02_RUNNER/ge-proton11-1.tar.gz",
+      "sha256": "37820bc84240d5b786b5d2324fdb8c96c8328f4ce320560a1c2f47859fbe13fc"
+    }
+  ],
+  "save_archives": [
+    {
+      "path": "05_PARTIDAS_GUARDADAS/16-07-2026.zip",
+      "sha256": "582bd05633038603d992956b58b1e083217c900363380319281e1e2583787d97"
+    }
+  ],
+  "schema": 0,
+  "source_type": "tree-hashes-report",
+  "status": "recognized",
+  "template": "legacy-preservation-package-v1"
+}
