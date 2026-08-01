@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.1 — 2026-08-01
+
+- Corregido el ensayo y commit de cápsulas sin estado persistente declarado.
+- El importer ya no invoca `preserve-state` ni fabrica un backup vacío cuando
+  no hay partidas, identidad o configuración seleccionadas.
+- El recibo registra `backup_status: not-applicable` y valores nulos para el
+  backup aceptado.
+- Añadida una prueba de regresión que reproduce el rechazo del núcleo.
+
+## 0.3.0 — 2026-08-01
+
+- Sustituido el flujo principal de migración histórica por un único modelo:
+  `prepared-offline-game-directory-v1`.
+- Eliminados de CLI y GUI los caminos públicos de paquete histórico.
+- Añadida inspección orientativa de ejecutables y DLLs Steamworks.
+- Añadidas sugerencias editables para `capsule_id`, `profile_id`, save-set y
+  contenido adicional.
+- Añadido soporte gráfico y contractual para UMU.
+- Añadida selección manual de documentación con roles y nombres canónicos.
+- Partidas, contenido adicional, documentación y runner se copian al workspace
+  durante `prepare`.
+- Añadido `PUBLIC_IMPORT_PLAN.json` sin rutas privadas.
+- El commit publica documentos seleccionados sin reescribirlos y genera
+  plantillas solo para roles raíz ausentes.
+- Actualizado el esquema a `ogv-import-plan-v3`.
+- Añadidas cuatro pruebas del nuevo flujo; total: 25.
+- La importación sigue publicando candidatos, nunca perfiles verificados.
+
 ## 0.2.1
 
 - Corrige la resolución de estados incluidos dentro del Full Archive cuando la GUI conserva un `source_path` relativo o obsoleto.

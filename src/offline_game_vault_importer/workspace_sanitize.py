@@ -4,8 +4,9 @@ from pathlib import Path
 import shutil
 from typing import Any
 
+from . import __version__
 from .errors import ImporterError
-from .planner import validate_plan
+from .planner import public_plan, validate_plan
 from .prepare import (
     _build_deterministic_tar_gz,
     _inventory,
@@ -18,10 +19,21 @@ from .verify import verify_workspace
 
 def _same_source_identity(old: dict[str, Any], new: dict[str, Any]) -> None:
     checks = [
-        ("source.game_archive_sha256", old["source"]["game_archive_sha256"], new["source"]["game_archive_sha256"]),
-        ("source.game_archive", old["source"]["game_archive"], new["source"]["game_archive"]),
-        ("identity.capsule_id", old["identity"]["capsule_id"], new["identity"]["capsule_id"]),
-        ("layout.game_root_in_archive", old["layout"]["game_root_in_archive"], new["layout"]["game_root_in_archive"]),
+        (
+            "identity.capsule_id",
+            old.get("identity", {}).get("capsule_id"),
+            new.get("identity", {}).get("capsule_id"),
+        ),
+        (
+            "layout.entrypoint",
+            old.get("layout", {}).get("entrypoint"),
+            new.get("layout", {}).get("entrypoint"),
+        ),
+        (
+            "layout.game_destination_in_prefix",
+            old.get("layout", {}).get("game_destination_in_prefix"),
+            new.get("layout", {}).get("game_destination_in_prefix"),
+        ),
     ]
     mismatches = [
         f"{label}: {before!r} != {after!r}"
@@ -33,7 +45,6 @@ def _same_source_identity(old: dict[str, Any], new: dict[str, Any]) -> None:
             "el plan de saneamiento no corresponde al workspace: "
             + "; ".join(mismatches)
         )
-
 
 def sanitize_workspace(
     workspace: Path,
@@ -75,7 +86,7 @@ def sanitize_workspace(
     privacy = _privacy_report(
         neutral,
         source_root=None,
-        package_name=plan["source"]["package_name"],
+        package_name=(plan.get("identity", {}).get("title") or "game"),
     )
     write_json(root / "reports/privacy-report.json", privacy)
 
@@ -88,6 +99,7 @@ def sanitize_workspace(
     object_bytes = object_path.stat().st_size
 
     write_json(root / "IMPORT_PLAN.json", plan)
+    write_json(root / "PUBLIC_IMPORT_PLAN.json", public_plan(plan))
 
     draft_path = root / "draft/CAPSULE_INPUT.json"
     draft = read_json(draft_path, "CAPSULE_INPUT.json")
@@ -98,7 +110,8 @@ def sanitize_workspace(
         for item in draft.get("blockers", [])
         if item not in {
             "Resolver hallazgos de privacidad, si existen.",
-            "Revalidar representación de texto: se retiraron referencias a fuentes externas ausentes del prefix.",
+            "Revalidar representación de texto: se retiraron referencias "
+            "a fuentes externas ausentes del prefix.",
         }
     ]
     if privacy["blocking_text_hits"]:
@@ -111,7 +124,7 @@ def sanitize_workspace(
     draft["blockers"] = blockers
     write_json(draft_path, draft)
 
-    receipt["tool_version"] = "0.1.2"
+    receipt["tool_version"] = __version__
     receipt["status"] = (
         "candidate-needs-privacy-review"
         if privacy["blocking_text_hits"]
@@ -129,7 +142,7 @@ def sanitize_workspace(
     return {
         "schema": 0,
         "operation": "sanitize-neutral-import-workspace",
-        "tool_version": "0.1.2",
+        "tool_version": __version__,
         "status": (
             "verified-needs-privacy-review"
             if privacy["blocking_text_hits"]

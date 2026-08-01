@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from .errors import ImporterError
-from .legacy import scan_package
-from .manual_prepare import prepare_manual_workspace
-from .planner import build_plan, validate_plan
-from .prepare import prepare_workspace
+from .manual_prepare import prepare_prepared_workspace
+from .planner import (
+    new_prepared_plan,
+    require_prepared_plan_contract,
+    validate_plan,
+)
+from .prepared import inspect_prepared_game
 from .util import read_json, write_json
 from .vault_commit import commit_workspace
 from .verify import verify_workspace
@@ -21,11 +24,13 @@ class ImportSession:
     plan_path: Path | None = None
     workspace: Path | None = None
     vault: Path | None = None
-    source_package: Path | None = None
+    game_directory: Path | None = None
+    inspection: dict[str, Any] | None = None
     messages: list[str] = field(default_factory=list)
 
     def load_plan(self, path: Path) -> dict[str, Any]:
         value = read_json(path, "IMPORT_PLAN.json")
+        require_prepared_plan_contract(value)
         self.plan = validate_plan(value, phase="gui")
         self.plan_path = path.expanduser().resolve(strict=True)
         self.messages.append(f"Plan cargado: {self.plan_path}")
@@ -38,25 +43,85 @@ class ImportSession:
         if target is None:
             raise ImporterError("indique una ruta para guardar el plan")
         target = target.expanduser()
+        require_prepared_plan_contract(self.plan)
         write_json(target, validate_plan(self.plan, phase="gui"))
         self.plan_path = target.resolve(strict=True)
         self.messages.append(f"Plan guardado: {self.plan_path}")
         return self.plan_path
 
-    def scan_legacy(
+    def new_prepared(
         self,
-        source: Path,
         *,
-        vault: Path | None = None,
-        full_hash: bool = False,
+        game: Path | None = None,
+        title: str | None = None,
     ) -> dict[str, Any]:
-        scan = scan_package(source, vault=vault, full_hash=full_hash)
-        self.plan = build_plan(scan)
-        self.source_package = source.expanduser().resolve(strict=True)
-        if vault is not None:
-            self.vault = vault.expanduser().resolve(strict=True)
-        self.messages.append("Paquete histórico escaneado")
-        return scan
+        game_text = str(game) if game is not None else None
+        self.plan = new_prepared_plan(
+            title=title,
+            game_directory=game_text,
+        )
+        self.plan_path = None
+        if game is not None:
+            self.game_directory = game.expanduser().resolve(strict=True)
+            self.inspection = inspect_prepared_game(
+                self.game_directory,
+                title=title,
+            )
+            self._apply_inspection(self.inspection)
+        self.messages.append("Plan de juego desacoplado creado")
+        return self.plan
+
+    def inspect_game(
+        self,
+        game: Path,
+        *,
+        title: str | None = None,
+    ) -> dict[str, Any]:
+        root = game.expanduser().resolve(strict=True)
+        inspection = inspect_prepared_game(root, title=title)
+        self.game_directory = root
+        self.inspection = inspection
+        if self.plan is None:
+            self.plan = new_prepared_plan(
+                title=title,
+                game_directory=str(root),
+            )
+        self._apply_inspection(inspection)
+        self.messages.append(f"Directorio inspeccionado: {root}")
+        return inspection
+
+    def _apply_inspection(self, inspection: dict[str, Any]) -> None:
+        if self.plan is None:
+            raise ImporterError("no hay un plan cargado")
+        source = self.plan.setdefault("source", {})
+        source["game_directory"] = str(self.game_directory) if self.game_directory else None
+        suggestions = inspection["naming_suggestions"]
+        self.plan["naming_examples"] = suggestions
+        identity = self.plan["identity"]
+        if identity.get("title") in {"", "[RELLENAR]", "game"}:
+            identity["title"] = inspection["directory_name"]
+        if identity.get("capsule_id") in {"", "[RELLENAR]", "game"}:
+            identity["capsule_id"] = suggestions["capsule_id"]
+        layout = self.plan["layout"]
+        layout["entrypoint_candidates_relative_to_game"] = [
+            item["path"] for item in inspection["executables"]
+        ]
+        if inspection.get("entrypoint_suggestion") and layout.get("entrypoint") in {
+            "",
+            "[RELLENAR]",
+        }:
+            layout["entrypoint"] = inspection["entrypoint_suggestion"]
+        if layout.get("game_destination_in_prefix") in {
+            "",
+            "[RELLENAR]",
+            "drive_c/Games/game",
+        }:
+            layout["game_destination_in_prefix"] = suggestions[
+                "game_destination_in_prefix"
+            ]
+            layout["working_directory"] = suggestions[
+                "game_destination_in_prefix"
+            ]
 
     def set_identity(
         self,
@@ -200,6 +265,43 @@ class ImportSession:
             }
         )
 
+    def add_documentation(
+        self,
+        *,
+        item_id: str,
+        source_path: str | None,
+        role: str,
+        canonical_name: str,
+        description: str = "",
+    ) -> None:
+        if self.plan is None:
+            raise ImporterError("no hay un plan cargado")
+        self.plan.setdefault("documentation", []).append(
+            {
+                "id": item_id.strip(),
+                "source_path": source_path or None,
+                "role": role,
+                "canonical_name": canonical_name.strip(),
+                "description": description,
+            }
+        )
+
+    def set_profile(
+        self,
+        *,
+        adapter: str,
+        profile_id: str,
+        enabled: bool,
+    ) -> None:
+        if self.plan is None:
+            raise ImporterError("no hay un plan cargado")
+        for profile in self.plan["profiles"]:
+            if profile.get("adapter") == adapter:
+                profile["id"] = profile_id.strip()
+                profile["enabled"] = bool(enabled)
+                return
+        raise ImporterError(f"perfil no encontrado para adapter={adapter}")
+
     def validate(self, phase: str = "gui") -> dict[str, Any]:
         if self.plan is None:
             raise ImporterError("no hay un plan cargado")
@@ -222,14 +324,22 @@ class ImportSession:
             ),
         }
 
-    def prepare_legacy(self, workspace: Path) -> dict[str, Any]:
-        if self.plan is None or self.source_package is None:
-            raise ImporterError("faltan plan o paquete fuente")
-        result = prepare_workspace(
+    def prepare(
+        self,
+        *,
+        game: Path,
+        prefix: Path | None,
+        workspace: Path,
+    ) -> dict[str, Any]:
+        if self.plan is None:
+            raise ImporterError("no hay un plan cargado")
+        result = prepare_prepared_workspace(
             self.plan,
-            source_package=self.source_package,
+            game=game,
+            prefix=prefix,
             workspace=workspace,
         )
+        self.game_directory = game.expanduser().resolve(strict=True)
         self.workspace = workspace.expanduser().resolve(strict=True)
         self.plan_path = self.workspace / "IMPORT_PLAN.json"
         self.plan = read_json(self.plan_path, "IMPORT_PLAN.json")
@@ -242,18 +352,8 @@ class ImportSession:
         prefix: Path | None,
         workspace: Path,
     ) -> dict[str, Any]:
-        if self.plan is None:
-            raise ImporterError("no hay un plan cargado")
-        result = prepare_manual_workspace(
-            self.plan,
-            game=game,
-            prefix=prefix,
-            workspace=workspace,
-        )
-        self.workspace = workspace.expanduser().resolve(strict=True)
-        self.plan_path = self.workspace / "IMPORT_PLAN.json"
-        self.plan = read_json(self.plan_path, "IMPORT_PLAN.json")
-        return result
+        """Compatibility alias for callers of 0.2.x."""
+        return self.prepare(game=game, prefix=prefix, workspace=workspace)
 
     def verify(self) -> dict[str, Any]:
         if self.workspace is None:

@@ -12,6 +12,7 @@ import tarfile
 import uuid
 from typing import Any, Callable
 
+from . import __version__
 from .archive import safe_extract_tar
 from .errors import ImporterError
 from .planner import validate_plan
@@ -639,7 +640,7 @@ def _prepare_workspace_in_place(
     receipt = {
         "schema": 0,
         "operation": "prepare-neutral-import-workspace",
-        "tool_version": "0.2.1",
+        "tool_version": __version__,
         "status": (
             "candidate-needs-privacy-review"
             if privacy["blocking_text_hits"]

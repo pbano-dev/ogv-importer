@@ -1,261 +1,337 @@
-# OfflineGameVault Importer 0.2.1
+# OfflineGameVault Importer
 
-Asistente gráfico y CLI para incorporar juegos de Windows al Vault como
-**candidatos materializables**.
+Herramienta gráfica y CLI para incorporar a OfflineGameVault un **directorio de
+juego de Windows ya preparado y desacoplado de Steam**.
 
-La detección automática es orientativa. La selección efectiva del usuario es
-la autoridad: juego, prefix, ejecutable, runner, partidas, configuración y
-contenido adicional pueden señalarse manualmente.
+## Alcance
 
-## Modelo
+El importer empieza cuando ya existe una copia jugable que el usuario ha
+preparado previamente. Para juegos procedentes de Steam y sin DRM de terceros,
+esa copia puede contener Goldberg/gbe_fork y, cuando SteamStub lo requiera, un
+ejecutable desempaquetado con Steamless.
 
-```text
-fuente histórica o selección manual
-        ↓
-IMPORT_PLAN.json
-        ↓
-workspace neutral verificado
-        ↓
-ensayo transaccional
-        ↓
-Importar al Vault
-```
+El importer:
 
-El importador separa:
+- copia el directorio jugable sin reinterpretarlo;
+- genera inventario y SHA-256;
+- separa estado persistente, contenido adicional y documentación;
+- puede preservar un runner/runtime y un prefix inicial;
+- construye un workspace autocontenido;
+- valida y publica transaccionalmente un candidato en el Vault.
 
-```text
-payload/game
-payload/prefix-template
-estado persistente
-metadatos Bottles
-runner/runtime compartido
-contenido suplementario
-```
+El importer **no**:
 
-El Full Archive de Bottles es una fuente de importación, no el formato
-canónico universal.
+- instala ni conserva el cliente Steam;
+- importa instaladores de Steam;
+- descarga depots;
+- aplica Steamless;
+- sustituye `steam_api.dll` o `steam_api64.dll`;
+- configura Goldberg/gbe_fork;
+- retira DRM de terceros;
+- declara aceptación funcional por el mero hecho de importar.
 
-## Qué publica
+## Contrato único
 
-Una importación correcta crea o actualiza:
+La versión 0.3.1 utiliza un único modelo:
 
 ```text
-01_IMMUTABLE_VAULT/
-  objects/sha256/...                objeto neutral del juego
-  objects/sha256/...                runner nuevo, solo si se seleccionó y no existe
-
-02_CAPSULES/<capsule_id>/
-  capsule.json
-  PROVENANCE.json
-  CONTENT_STATUS.json
-  docs/
-  evidence/
-  host-contracts/
-  supplemental-content/
-
-03_PERSISTENT_STATE/<capsule_id>/
-  accepted/
-  save-sets/
-  snapshots/
-  history/
-
-04_RECEIPTS/<capsule_id>/operations/<operation_id>/
-05_PRIVATE_WORKSPACES/<capsule_id>/
-06_DERIVED_MATERIALIZATIONS/<capsule_id>/
-07_EXPORTS/<capsule_id>/
+ogv-import-plan-v3
+source.type = prepared-offline-game-directory-v1
 ```
 
-También actualiza `INDEX.json`, `COLLECTION_LAYOUT.json`,
-`COLLECTION_SHA256.txt` y `VAULT_INVENTORY.json`.
+La CLI, la GUI, `prepare` y `commit-vault` rechazan planes v1/v2 y fuentes
+históricas. El código auxiliar antiguo permanece únicamente para pruebas de
+regresión y no constituye otro modo público de importación.
 
-## Candidatos, no garantías
-
-La ausencia de runner, partidas, DLC o una clasificación completa no impide
-preservar el juego. Se registra la incertidumbre:
+El plan confirma:
 
 ```text
-candidate
-not_tested
-select-at-materialization
-embedded-or-unknown
-destination-unbound
+steam_independent = true
+legitimate_source = true
+third_party_drm = declared-absent
+preparation.performed_before_import = true
 ```
 
-`candidate` significa que la GUI principal puede intentar materializar el
-perfil. No significa que el juego haya sido probado.
+Estas declaraciones describen la entrada seleccionada. No sustituyen una
+prueba posterior de arranque, partida, DLC, red o restauración.
 
-Solo bloquean el commit problemas estructurales o transaccionales: fuente
-ilegible, hash incoherente, traversal, symlinks que escapan, archivos
-especiales, colisión de capsule ID, Vault cambiado, falta de espacio o fallo
-de rollback.
-
-## Partidas multielemento
-
-Una partida lógica puede contener varios elementos:
-
-```text
-Partida principal
-├── save.dat
-├── save.dat.bak
-└── directorio de slots
-```
-
-Todos los elementos con el mismo `save_set_id` se publican juntos. La GUI
-principal los restaura de forma atómica. Si el baseline no está demostrado
-como limpio, se etiqueta `embedded-or-unknown`; no se presenta como
-“Sin partida”.
-
-## Runner
-
-El runner puede:
-
-- reutilizarse por SHA-256 desde el Vault;
-- seleccionarse como archivo;
-- seleccionarse como directorio, que se convierte a `tar.gz` determinista;
-- dejarse sin vincular para elegirlo al materializar.
-
-Un runner nuevo se publica como objeto `shared-runner`. Un digest ya conocido
-no se duplica.
-
-## Privacidad
-
-Las rutas conocidas del anfitrión se sanean en el prefix neutral. Los
-metadatos Bottles originales se conservan únicamente en
-`05_PRIVATE_WORKSPACES`; la cápsula recibe, cuando existe, una plantilla
-`bottle.yml` saneada.
-
-Las referencias desconocidas continúan visibles en el informe. La política
-`allow_privacy_pending` determina si la importación privada puede continuar
-con pendientes declarados.
-
-## GUI
-
-Requisitos de escritorio: Python 3.11+, GTK 4 y PyGObject.
+## Flujo gráfico
 
 ```bash
-./scripts/run-gui.sh
+ogv-import-gui
 ```
 
-o:
+1. Seleccionar el Vault.
+2. Seleccionar un workspace nuevo.
+3. Seleccionar el directorio del juego desacoplado.
+4. Pulsar **Inspeccionar y proponer**.
+5. Revisar título, `capsule_id`, ejecutable y destino.
+6. Añadir opcionalmente:
+   - prefix;
+   - runner/runtime;
+   - partidas e identidad;
+   - contenido adicional;
+   - documentación.
+7. Elegir perfiles candidatos.
+8. Preparar el workspace.
+9. Verificar.
+10. Ejecutar un dry-run.
+11. Importar al Vault.
 
-```bash
-./scripts/ogv-import.sh gui
+La inspección propone ejecutables e identificadores. La selección del usuario
+sigue siendo la autoridad.
+
+## Nomenclatura sugerida
+
+A partir del título o del nombre del directorio se generan ejemplos editables:
+
+```text
+Título:        ELDEN RING NIGHTREIGN
+capsule_id:   elden-ring-nightreign
+
+profile_id:
+linux-bottles-flatpak
+linux-direct-wine
+linux-umu-proton
+windows-native
+
+save_set_id:
+elden-ring-nightreign-main
+
+state_id:
+elden-ring-nightreign-save
 ```
 
-El asistente permite:
-
-1. seleccionar el Vault y el origen;
-2. escanear un paquete histórico o crear un plan manual;
-3. elegir juego, prefix y ejecutable;
-4. elegir o dejar sin vincular el runner;
-5. añadir archivos o directorios de estado;
-6. agrupar varios elementos en un save-set;
-7. añadir contenido suplementario;
-8. habilitar perfiles Bottles, Direct-Wine y Windows;
-9. validar, ensayar y ejecutar el commit.
+Los identificadores usan minúsculas ASCII y separadores `-`, `_` o `.`. Una
+sugerencia no es evidencia y puede cambiarse antes del commit.
 
 ## CLI
 
+### Inspeccionar un directorio
+
 ```bash
-./scripts/ogv-import.sh --help
+ogv-import inspect-game \
+  --game "$HOME/Juegos/<JUEGO>" \
+  --title "<JUEGO>" \
+  --output inspection.json
 ```
 
-### Paquete histórico
+La inspección muestra:
+
+- ejecutables candidatos;
+- DLLs `steam_api*.dll` y sus hashes;
+- número de archivos y tamaño;
+- symlinks;
+- nomenclatura sugerida.
+
+No demuestra que el juego arranque ni ausencia de DRM de terceros.
+
+### Crear un plan
 
 ```bash
-ogv-import scan-package \
-  --source <PAQUETE> \
-  --vault <VAULT> \
-  --output import-scan.json
-
-ogv-import init-plan \
-  --scan import-scan.json \
+ogv-import new-plan \
+  --game "$HOME/Juegos/<JUEGO>" \
+  --title "<JUEGO>" \
   --output IMPORT_PLAN.json
+```
 
+Revise como mínimo:
+
+```text
+identity.preserved_version
+identity.capsule_id
+layout.entrypoint
+layout.game_destination_in_prefix
+layout.working_directory
+profiles
+```
+
+### Preparar el workspace
+
+```bash
 ogv-import prepare \
   --plan IMPORT_PLAN.json \
-  --source <PAQUETE> \
-  --workspace <WORKSPACE_NUEVO>
+  --game "$HOME/Juegos/<JUEGO>" \
+  --workspace "$HOME/OGV-workspaces/<JUEGO>"
 ```
 
-### Selección manual
+Con prefix opcional:
 
 ```bash
-ogv-import new-manual-plan --output IMPORT_PLAN.json
-
-ogv-import prepare-manual \
+ogv-import prepare \
   --plan IMPORT_PLAN.json \
-  --game <DIRECTORIO_DEL_JUEGO> \
-  --prefix <PREFIX_OPCIONAL> \
-  --workspace <WORKSPACE_NUEVO>
+  --game "$HOME/Juegos/<JUEGO>" \
+  --prefix "$HOME/Prefixes/<JUEGO>" \
+  --workspace "$HOME/OGV-workspaces/<JUEGO>"
 ```
-
-Los archivos o directorios de partidas, runner y contenido adicional se
-declaran en el plan o desde la GUI.
 
 ### Verificar y publicar
 
 ```bash
-ogv-import verify-workspace --workspace <WORKSPACE>
+ogv-import verify-workspace \
+  --workspace "$HOME/OGV-workspaces/<JUEGO>"
 
 ogv-import commit-vault \
-  --workspace <WORKSPACE> \
-  --vault <VAULT> \
+  --workspace "$HOME/OGV-workspaces/<JUEGO>" \
+  --vault "$HOME/OfflineGameVault" \
   --dry-run
 
 ogv-import commit-vault \
-  --workspace <WORKSPACE> \
-  --vault <VAULT>
+  --workspace "$HOME/OGV-workspaces/<JUEGO>" \
+  --vault "$HOME/OfflineGameVault"
 ```
 
-El commit usa el núcleo oficial `ogv` para auditar la cápsula, preservar y
-verificar `accepted`, ingerir objetos e inventariar el almacén. Puede
-localizarse mediante `OGV_SOURCE_ROOT`, `core.source_root`, `core.command` o un
-`ogv` instalado.
+## Partidas y estado
 
-## Seguridad transaccional
+Cada elemento puede ser un archivo o directorio seleccionado manualmente.
 
-Antes de publicar:
+Disposiciones:
 
-- verifica el workspace y el objeto neutral;
-- comprueba los documentos críticos del Vault;
-- crea staging fuera de las rutas finales;
-- audita la cápsula con el núcleo;
-- genera y verifica `accepted`;
-- ingiere por SHA-256 sin sobrescribir;
-- publica directorios completos;
-- actualiza manifiestos;
-- revierte documentos, directorios y objetos nuevos si falla.
+```text
+save-set
+identity
+configuration
+exclude
+embedded
+unbound
+```
 
-Los objetos preexistentes nunca se eliminan durante un rollback.
+Varios elementos con el mismo `save_set_id` forman una unidad lógica. La ruta
+de restauración es relativa al root de estado del perfil; no se adivina.
 
-## Pruebas incluidas
+Una partida sin destino conocido puede preservarse con `disposition=unbound`,
+pero no se declara restaurable.
+
+## Contenido adicional
+
+` supplemental_content ` admite archivos o directorios como:
+
+```text
+artbook
+soundtrack
+manual
+wallpapers
+bonus-video
+edition-bonus
+other
+```
+
+El contenido se copia al workspace durante `prepare`. El commit ya no depende
+de que la ruta original siga existiendo.
+
+## Documentación
+
+`documentation` permite seleccionar documentos existentes y asignarles un rol:
+
+```text
+readme
+game_sheet
+credits
+preserved_by
+technical_notes
+addendum
+other
+```
+
+Nombres canónicos habituales:
+
+```text
+00_README.md
+FICHA_DEL_JUEGO.md
+CREDITOS.md
+PRESERVADO_POR.md
+NOTAS_TECNICAS_DEL_PROCESO.md
+ADDENDUM_<JUEGO>.md
+```
+
+El archivo seleccionado se conserva byte a byte bajo el nombre canónico
+indicado. Si falta uno de los cuatro documentos raíz obligatorios, se genera
+una plantilla marcada con `[RELLENAR]`, `[VERIFICAR]` o `[NO PROBADO]`.
+
+## Workspace
+
+```text
+<WORKSPACE>/
+├── IMPORT_PLAN.json
+├── PUBLIC_IMPORT_PLAN.json
+├── PREPARE_RECEIPT.json
+├── neutral-object/
+│   ├── payload/game/
+│   ├── payload/prefix-template/
+│   ├── NEUTRAL_LAYOUT.json
+│   ├── INVENTORY.json
+│   └── INVENTORY_SEAL.json
+├── selected-components/
+│   ├── runner/
+│   ├── supplemental_content/
+│   └── documentation/
+├── private-state/
+├── objects/neutral-game.tar.gz
+├── reports/
+└── draft/CAPSULE_INPUT.json
+```
+
+`IMPORT_PLAN.json` conserva rutas locales mientras el workspace existe.
+`PUBLIC_IMPORT_PLAN.json` elimina rutas fuente, checkout del core y comandos
+locales. La cápsula publica únicamente la copia saneada.
+
+## Perfiles
+
+Perfiles disponibles:
+
+```text
+Bottles
+Direct-Wine
+UMU/Proton
+Windows nativo
+```
+
+Bottles se habilita por defecto. Los demás se habilitan manualmente cuando
+aplican. El importer solo publica estados `candidate`, `experimental`,
+`not_tested` o `unavailable`; rechaza `verified`.
+
+## Integridad y privacidad
+
+La preparación:
+
+- rechaza archivos especiales;
+- rechaza symlinks en partidas, documentación y contenido adicional;
+- conserva y audita los symlinks del juego;
+- genera un objeto neutral determinista;
+- sella `INVENTORY.json`;
+- genera SHA-256;
+- separa el plan privado del plan publicable;
+- conserva las selecciones manuales dentro del workspace.
+
+Los logs brutos no deben añadirse como documentación por defecto porque pueden
+contener rutas absolutas y datos del anfitrión.
+
+## Estado de aceptación
+
+Una importación correcta verifica estructura e integridad. Siguen pendientes,
+salvo evidencia posterior:
+
+```text
+arranque sin Steam
+partida existente
+DLC real
+vídeo y audio
+mando y hotplug
+aislamiento de red
+cierre normal
+reubicación
+restauración limpia
+Windows nativo
+```
+
+## Pruebas
 
 ```bash
-./scripts/test.sh
+bash scripts/test.sh
 ```
 
-La suite cubre escaneo seguro, preparación, saneamiento, save-sets
-multielemento, runner ausente, runner manual como directorio, dry-run, commit
-sintético, recibos y rollback básico.
-
-## Límites de 0.2.1
-
-Verificado mediante fixtures sintéticos:
-
-- core, CLI y GUI;
-- commit candidato;
-- objeto de juego y runner;
-- save-sets multielemento;
-- contratos Bottles, Direct-Wine y Windows.
-
-Pendiente de aceptación en el Vault real:
-
-- commit de Nightreign;
-- materialización real con Bottles;
-- materialización real con Direct-Wine;
-- exportación y prueba en Windows;
-- gameplay, vídeo, audio, mando, DLC, red y cierre.
-
-No aplica Steamless, gbe_fork, EAC ni otras modificaciones. Importa la copia
-que el usuario ya ha preparado y documenta lo que encuentra.
+La suite 0.3.1 cubre el flujo preparado, nomenclatura, inspección, partidas
+multielemento, ausencia válida de estado persistente, documentación seleccionada,
+contenido adicional, privacidad, dry-run, commit y rollback, además de pruebas
+de seguridad de archivo heredadas
+que siguen protegiendo las primitivas internas.

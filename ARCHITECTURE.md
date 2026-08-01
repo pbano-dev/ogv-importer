@@ -1,73 +1,138 @@
-# Arquitectura del importador 0.2.1
+# Arquitectura — OfflineGameVault Importer 0.3.1
+
+## Responsabilidad
+
+El importer es la frontera entre una copia jugable ya desacoplada y el Vault.
 
 ```text
-GUI / CLI
-    ↓
-ImportSession + IMPORT_PLAN v2
-    ↓
-scanner / manual selectors
-    ↓
-prepare legacy | prepare manual
-    ↓
-workspace neutral sellado
-    ↓
-validate + dry-run
-    ↓
+directorio jugable preparado
+        │
+        ▼
+inspección orientativa
+        │
+        ▼
+ogv-import-plan-v3
+        │
+        ▼
+workspace neutral autocontenido
+        │
+        ├── juego/prefix
+        ├── estado privado
+        ├── runner
+        ├── contenido adicional
+        └── documentación
+        │
+        ▼
+verify + dry-run
+        │
+        ▼
 commit transaccional
-    ↓
+        │
+        ▼
 OfflineGameVault
 ```
+
+No existe un segundo modo de importación para instalaciones dependientes de
+Steam ni para paquetes históricos.
 
 ## Autoridad
 
 1. selección efectiva del usuario;
-2. árbol y hashes de la fuente;
-3. detección automática;
-4. documentación histórica.
+2. árbol copiado al workspace;
+3. inventarios y hashes;
+4. detección automática;
+5. documentación descriptiva.
 
-La detección nunca modifica una selección confirmada.
+La inspección nunca reemplaza una selección confirmada.
 
-## Objeto canónico
-
-El objeto principal contiene:
+## Contrato de entrada
 
 ```text
-neutral-object/
-├── payload/game/
-├── payload/prefix-template/
-├── NEUTRAL_LAYOUT.json
-├── INVENTORY.json
-└── INVENTORY_SEAL.json
+contract: ogv-import-plan-v3
+source.type: prepared-offline-game-directory-v1
 ```
 
-No contiene `bottle.yml`, partidas extraídas ni runner.
+Se presupone que el desacople se realizó antes:
+
+```text
+Steamworks → Goldberg/gbe_fork o no requerido
+SteamStub  → Steamless o no requerido
+DRM de terceros → declarado ausente
+```
+
+El importer registra esta frontera y no ejecuta ninguna de esas operaciones.
+
+## Neutralización
+
+El objeto inmutable contiene:
+
+```text
+payload/game/
+payload/prefix-template/
+NEUTRAL_LAYOUT.json
+INVENTORY.json
+INVENTORY_SEAL.json
+```
+
+Estado, documentación, extras y runner se copian por separado durante
+`prepare`. El commit trabaja desde el workspace y no desde las rutas fuente.
+
+## Nomenclatura
+
+`naming.py` genera sugerencias conservadoras, ASCII y editables. Los ID de
+perfil canónicos son:
+
+```text
+linux-bottles-flatpak
+linux-direct-wine
+linux-umu-proton
+windows-native
+```
+
+La sugerencia de ejecutable solo se aplica automáticamente cuando hay un único
+candidato. Con varios ejecutables, el usuario decide.
+
+## Privacidad
+
+El workspace conserva dos planes:
+
+```text
+IMPORT_PLAN.json         privado y operativo
+PUBLIC_IMPORT_PLAN.json  publicable y sin rutas del anfitrión
+```
+
+El commit publica únicamente el segundo. También elimina del plan público el
+comando y checkout local del core.
+
+## Documentación
+
+Los documentos seleccionados se copian al workspace y después a `docs/`.
+Los cuatro roles raíz reciben plantilla solamente cuando no se aportó un
+documento explícito:
+
+```text
+readme
+game_sheet
+credits
+preserved_by
+```
 
 ## Perfiles
 
-La cápsula publica host contracts neutrales:
+La cápsula puede declarar Bottles, Direct-Wine, UMU y Windows. Cada perfil
+mantiene su ID editable y su estado independiente. El importer prohíbe publicar
+`verified`.
 
-- `ogv-bottles-neutral-v1`;
-- `ogv-direct-wine-neutral-v1`;
-- `ogv-windows-export-v1`.
+## Límites
 
-La GUI principal transforma esos contratos al materializar. La aceptación se
-vincula al perfil, runner y save-set elegidos.
+La importación no prueba:
 
-## Estado
+- arranque;
+- ausencia material de DRM adicional;
+- contenido DLC;
+- partidas;
+- aislamiento;
+- restauración;
+- compatibilidad futura.
 
-`accepted` representa el baseline importado. Los save-sets se almacenan como
-`ogv-save-set-v2` y pueden incluir varios ficheros o directorios. La selección
-predeterminada es siempre `none`; solo se rotula “Sin partida” cuando
-`baseline_state=clean`.
-
-## Transacción
-
-El commit:
-
-1. relee los documentos críticos;
-2. crea staging;
-3. audita cápsula y estado con el núcleo;
-4. ingiere objetos por digest;
-5. publica árboles completos;
-6. regenera inventario y manifiestos;
-7. revierte cualquier ruta creada si falla.
+Esos resultados pertenecen a aceptación funcional posterior.

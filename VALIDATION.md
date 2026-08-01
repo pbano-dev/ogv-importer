@@ -1,52 +1,68 @@
-# Validación 0.2.1
+# Validación — OfflineGameVault Importer 0.3.1
 
-## Automatizada
-
-Suite incluida: **21 pruebas**.
+## Ejecución
 
 ```bash
-./scripts/test.sh
+bash scripts/test.sh
 ```
 
-Cubre:
-
-- traversal y symlinks inseguros;
-- escaneo de paquetes históricos;
-- preparación legacy y manual;
-- saneamiento de rutas del anfitrión;
-- estado parcial no bloqueante;
-- save-sets multielemento;
-- runner ausente;
-- runner nuevo seleccionado como directorio;
-- deduplicación por SHA-256;
-- dry-run;
-- commit sintético y recibos;
-- integridad del manifiesto de colección.
-
-## Antes de un commit real
+Resultado esperado:
 
 ```text
-[ ] copia externa del Vault
-[ ] espacio temporal suficiente
-[ ] workspace verificado
-[ ] privacidad revisada o excepción declarada
-[ ] IMPORT_PLAN sin marcadores obligatorios
-[ ] ensayo commit-vault --dry-run
-[ ] núcleo oficial accesible
+Ran 26 tests
+OK
 ```
 
-## Después del commit
+## Cobertura principal
+
+- contrato único `ogv-import-plan-v3`;
+- origen `prepared-offline-game-directory-v1`;
+- nomenclatura portable;
+- inspección de ejecutables y `steam_api*.dll`;
+- creación de workspace neutral;
+- inventario y sello;
+- partidas y save-sets;
+- destino `unbound`;
+- contenido adicional;
+- documentación seleccionada sin reescritura;
+- plantillas documentales de reserva;
+- copia del runner al workspace;
+- `PUBLIC_IMPORT_PLAN.json` sin rutas fuente;
+- verificación;
+- dry-run con y sin estado persistente declarado;
+- commit transaccional;
+- rollback;
+- deduplicación de runner;
+- rechazo de traversal, symlinks inseguros y archivos especiales.
+
+## Prueba end-to-end añadida
+
+La suite prepara un juego desacoplado de prueba con:
 
 ```text
-[ ] juego visible en la GUI principal
-[ ] perfil Bottles materializable
-[ ] perfil Direct-Wine materializable
-[ ] exportación Windows generable
-[ ] sin partida, cuando baseline_state=clean
-[ ] save-set multielemento aplicado completo
-[ ] partida cargada
-[ ] cierre normal
-[ ] retirada y restauración limpia
+ejecutable
+steam_api64.dll activa
+DLL original conservada
+partida manual
+artbook
+README seleccionado
 ```
 
-Una importación estructural aprobada no equivale a aceptación funcional.
+Después elimina todas las rutas fuente y completa el commit únicamente desde el
+workspace. Finalmente verifica el README exacto, el contenido adicional y la
+ausencia de rutas privadas en la evidencia publicada. Una prueba separada
+confirma que una cápsula sin partidas ni otro estado omite correctamente el
+backup de estado, en lugar de fabricar uno vacío.
+
+## No probado en este entorno
+
+- renderizado interactivo GTK4;
+- integración con un Vault real distinto del fixture;
+- juego comercial real;
+- gameplay;
+- Bottles real;
+- UMU real;
+- Windows nativo.
+
+La GUI se compila e importa sin GTK, pero su interacción debe probarse en el
+entorno Bazzite/Fedora objetivo.

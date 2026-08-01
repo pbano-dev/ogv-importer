@@ -1,5 +1,9 @@
 {
   "$defs": {
+    "portableId": {
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
+      "type": "string"
+    },
     "relativePath": {
       "minLength": 1,
       "not": {
@@ -9,15 +13,61 @@
       "type": "string"
     }
   },
-  "$id": "https://offline-game-vault.invalid/schemas/import-plan-v2.schema.json",
+  "$id": "https://offline-game-vault.invalid/schemas/import-plan-v3.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": true,
   "properties": {
     "contract": {
-      "const": "ogv-import-plan-v2"
+      "const": "ogv-import-plan-v3"
+    },
+    "documentation": {
+      "items": {
+        "properties": {
+          "canonical_name": {
+            "minLength": 1,
+            "pattern": "^[^/\\\\]+$",
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/$defs/portableId"
+          },
+          "role": {
+            "enum": [
+              "readme",
+              "game_sheet",
+              "credits",
+              "preserved_by",
+              "technical_notes",
+              "addendum",
+              "other"
+            ]
+          },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "canonical_name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
     },
     "identity": {
-      "additionalProperties": true,
       "properties": {
         "appid": {
           "type": [
@@ -27,8 +77,7 @@
           ]
         },
         "capsule_id": {
-          "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
-          "type": "string"
+          "$ref": "#/$defs/portableId"
         },
         "edition": {
           "type": [
@@ -58,7 +107,6 @@
       "type": "object"
     },
     "layout": {
-      "additionalProperties": true,
       "properties": {
         "entrypoint": {
           "$ref": "#/$defs/relativePath"
@@ -78,7 +126,6 @@
       "type": "object"
     },
     "persistent_state": {
-      "additionalProperties": true,
       "properties": {
         "baseline_state": {
           "enum": [
@@ -88,7 +135,6 @@
         },
         "items": {
           "items": {
-            "additionalProperties": true,
             "properties": {
               "disposition": {
                 "enum": [
@@ -101,8 +147,7 @@
                 ]
               },
               "id": {
-                "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*$",
-                "type": "string"
+                "$ref": "#/$defs/portableId"
               },
               "kind": {
                 "enum": [
@@ -138,6 +183,12 @@
                   "string",
                   "null"
                 ]
+              },
+              "workspace_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -167,14 +218,13 @@
     },
     "profiles": {
       "items": {
-        "additionalProperties": true,
         "properties": {
           "adapter": {
             "enum": [
               "bottles",
               "wine",
-              "windows",
               "umu",
+              "windows",
               "other"
             ]
           },
@@ -182,7 +232,7 @@
             "type": "boolean"
           },
           "id": {
-            "type": "string"
+            "$ref": "#/$defs/portableId"
           },
           "platform": {
             "enum": [
@@ -192,7 +242,6 @@
           },
           "status": {
             "enum": [
-              "verified",
               "candidate",
               "experimental",
               "not_tested",
@@ -213,7 +262,6 @@
       "type": "array"
     },
     "runner": {
-      "additionalProperties": true,
       "properties": {
         "binding": {
           "enum": [
@@ -251,11 +299,77 @@
     "schema": {
       "const": 0
     },
-    "status": {
-      "type": "string"
+    "source": {
+      "properties": {
+        "game_directory": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "legitimate_source": {
+          "const": true
+        },
+        "preparation": {
+          "properties": {
+            "performed_before_import": {
+              "const": true
+            }
+          },
+          "required": [
+            "performed_before_import"
+          ],
+          "type": "object"
+        },
+        "steam_independent": {
+          "const": true
+        },
+        "third_party_drm": {
+          "const": "declared-absent"
+        },
+        "type": {
+          "const": "prepared-offline-game-directory-v1"
+        }
+      },
+      "required": [
+        "type",
+        "steam_independent",
+        "legitimate_source",
+        "third_party_drm",
+        "preparation"
+      ],
+      "type": "object"
     },
     "supplemental_content": {
       "items": {
+        "properties": {
+          "classification": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/$defs/portableId"
+          },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "classification"
+        ],
         "type": "object"
       },
       "type": "array"
@@ -264,13 +378,16 @@
   "required": [
     "schema",
     "contract",
+    "source",
     "identity",
     "layout",
     "runner",
     "persistent_state",
+    "supplemental_content",
+    "documentation",
     "profiles",
     "policy"
   ],
-  "title": "OfflineGameVault Import Plan v2",
+  "title": "OfflineGameVault Prepared Game Import Plan v3",
   "type": "object"
 }

@@ -55,6 +55,12 @@ elif command == "preserve-state":
         [x for x in capsule.get("persistent_state", []) if x.get("backup", True)],
         key=lambda x: x["id"],
     )
+    if not declarations:
+        print(
+            "Capsule declares no persistent state with backup enabled",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     for index, declaration in enumerate(declarations):
         source = state_root / declaration["path"]
         if source.is_file():
@@ -318,6 +324,8 @@ class PlanTests(unittest.TestCase):
             "archive_path": "objects/sha256/bb/bb/" + "b" * 64,
             "shared": False,
         }
+        for profile in plan["profiles"]:
+            profile["enabled"] = True
         runner_object = {
             "id": "proton9",
             "digest": "sha256:" + "a" * 64,

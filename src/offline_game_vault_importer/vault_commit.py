@@ -16,9 +16,14 @@ import gzip
 from typing import Any, Iterator
 import uuid
 
+from . import __version__
 from .core_bridge import core_version, run_core_json
 from .errors import ImporterError
-from .planner import validate_plan
+from .planner import (
+    public_plan,
+    require_prepared_plan_contract,
+    validate_plan,
+)
 from .util import canonical_json_bytes, read_json, sha256_file, write_json
 from .verify import verify_workspace
 
@@ -37,7 +42,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _operation_id(prefix: str = "import-game-via-importer-v2") -> str:
+def _operation_id(prefix: str = "import-game-via-importer-v3") -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{prefix}-{stamp}-{secrets.token_hex(4)}"
 
@@ -299,7 +304,7 @@ Este documento firma el paquete de preservación, no la autoría del juego.
 
 ## Operaciones
 
-- Importación estructural mediante OfflineGameVault Importer 0.2.1.
+- Importación estructural mediante OfflineGameVault Importer 0.3.0.
 - Separación declarada de estado persistente.
 - Hashes SHA-256 y recibo transaccional.
 
@@ -323,9 +328,9 @@ def _protected_files(workspace: Path, plan: dict[str, Any]) -> list[dict[str, An
     if isinstance(entry, str) and entry:
         candidates.append(game.joinpath(*PurePosixPath(entry).parts))
     for name in ("steam_api64.dll", "steam_api.dll"):
-        candidate = game / name
-        if candidate.is_file() and not candidate.is_symlink():
-            candidates.append(candidate)
+        for candidate in game.rglob(name):
+            if candidate.is_file() and not candidate.is_symlink():
+                candidates.append(candidate)
     result = []
     seen: set[Path] = set()
     destination = PurePosixPath(plan["layout"]["game_destination_in_prefix"])
@@ -393,6 +398,22 @@ def _host_contracts(
             "uninstaller": "RETIRAR.sh",
             "protected_files": protected,
             "network": "host_default",
+        },
+    )
+    write_json(
+        host / "linux-umu.json",
+        {
+            **common,
+            "contract": "ogv-umu-neutral-v1",
+            "runtime_directory": "engine",
+            "prefix_directory": "prefix",
+            "launcher": "JUGAR.sh",
+            "protected_files": protected,
+            "network": "host_default",
+            "notes": (
+                "Perfil candidato: Proton, Steam Linux Runtime y variables "
+                "STEAM_COMPAT_* deben estar declarados por el perfil final."
+            ),
         },
     )
     write_json(
@@ -480,10 +501,10 @@ def _publish_bottles_evidence(
 def _copy_supplemental(
     capsule_root: Path,
     *,
+    workspace: Path,
     plan: dict[str, Any],
 ) -> list[dict[str, Any]]:
     destination_root = capsule_root / "supplemental-content"
-    destination_root.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, item in enumerate(plan.get("supplemental_content", [])):
@@ -496,22 +517,18 @@ def _copy_supplemental(
             raise ImporterError(f"contenido adicional duplicado: {item_id}")
         seen.add(item_id)
         classification = item.get("classification", "supplemental-content")
-        source_raw = item.get("source_path")
         result = {
             "id": item_id,
             "classification": classification,
+            "description": item.get("description", ""),
             "source_present": False,
             "status": "pending",
         }
-        if not isinstance(source_raw, str) or not source_raw:
+        source = _source_for_item(workspace, item)
+        if source is None:
             results.append(result)
             continue
-        source = Path(source_raw).expanduser()
-        if source.is_symlink() or not source.exists():
-            raise ImporterError(
-                f"contenido adicional ausente o symlink: {item_id}"
-            )
-        source = source.resolve(strict=True)
+        destination_root.mkdir(parents=True, exist_ok=True)
         destination = destination_root / item_id / source.name
         _copy_regular_or_tree(source, destination)
         result["source_present"] = True
@@ -530,6 +547,169 @@ def _copy_supplemental(
         results.append(result)
     return results
 
+
+def _document_paths(plan: dict[str, Any]) -> dict[str, str]:
+    defaults = {
+        "readme": "docs/00_README.md",
+        "game_sheet": "docs/FICHA_DEL_JUEGO.md",
+        "credits": "docs/CREDITOS.md",
+        "preserved_by": "docs/PRESERVADO_POR.md",
+    }
+    for item in plan.get("documentation", []):
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        canonical = item.get("canonical_name")
+        if role in defaults and isinstance(canonical, str) and canonical:
+            defaults[role] = f"docs/{canonical}"
+    return defaults
+
+
+def _publish_documentation(
+    capsule_root: Path,
+    *,
+    workspace: Path,
+    plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    docs = capsule_root / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    selected: list[dict[str, Any]] = []
+    occupied: set[str] = set()
+
+    for item in plan.get("documentation", []):
+        canonical = item["canonical_name"]
+        source = _source_for_item(workspace, item)
+        result: dict[str, Any] = {
+            "id": item["id"],
+            "role": item["role"],
+            "canonical_name": canonical,
+            "source_present": source is not None,
+            "status": "pending",
+        }
+        if source is None:
+            selected.append(result)
+            continue
+        if source.is_symlink() or not source.is_file():
+            raise ImporterError(
+                f"la documentación debe ser un archivo regular: {item['id']}"
+            )
+        destination = docs / canonical
+        if canonical in occupied or destination.exists():
+            raise ImporterError(
+                f"documentación duplicada para {canonical}"
+            )
+        shutil.copy2(source, destination)
+        occupied.add(canonical)
+        result.update(
+            {
+                "status": "selected-and-hashed",
+                "path": destination.relative_to(capsule_root).as_posix(),
+                "bytes": destination.stat().st_size,
+                "sha256": sha256_file(destination),
+            }
+        )
+        selected.append(result)
+
+    identity = plan["identity"]
+    title = identity["title"]
+    version = identity["preserved_version"]
+    appid = identity.get("appid") or "[NO APLICA]"
+    edition = identity.get("edition") or "[RELLENAR]"
+    templates = {
+        "00_README.md": f"""# {title} — cápsula candidata
+
+**Edición fuente:** {edition}
+**AppID:** {appid}
+**Versión preservada:** {version}
+**Estado:** CANDIDATO IMPORTADO
+
+El directorio de juego fue preparado antes de la importación para funcionar sin
+Steam. OfflineGameVault Importer no aplicó Steamless, no sustituyó DLLs y no
+realizó cambios DRM.
+
+## Límites
+
+- Arranque desde el Vault: [NO PROBADO]
+- Partidas: [NO PROBADO]
+- DLC real: [VERIFICAR]
+- Aislamiento de red: [NO PROBADO]
+- Restauración limpia: [NO PROBADO]
+""",
+        "FICHA_DEL_JUEGO.md": f"""# FICHA DEL JUEGO — {title}
+
+## Identificación
+
+- Tienda fuente: {identity["source_store"]}
+- AppID: {appid}
+- Edición: {edition}
+- Versión preservada: {version}
+
+## Datos específicos de la copia preservada
+
+Consultar `capsule.json`, `CONTENT_STATUS.json` y los recibos.
+
+## Fuentes
+
+[RELLENAR CON FUENTES PRIMARIAS]
+""",
+        "CREDITOS.md": f"""# CRÉDITOS — {title}
+
+Los créditos completos permanecen en el juego.
+
+## Roles principales
+
+[RELLENAR DESDE CRÉDITOS IN-GAME]
+""",
+        "PRESERVADO_POR.md": f"""# Preservado por
+
+Este documento firma el paquete, no la autoría del juego.
+
+## Autoría del paquete
+
+[RELLENAR]
+
+## Operaciones realizadas
+
+- Importación estructural mediante OfflineGameVault Importer {__version__}.
+- Preservación de componentes seleccionados con SHA-256.
+- No se aplicó Steamless ni se sustituyeron DLLs durante la importación.
+
+## Alcance
+
+Copia adquirida legítimamente, uso personal y sin distribución.
+""",
+    }
+    required_roles = {
+        "00_README.md": "readme",
+        "FICHA_DEL_JUEGO.md": "game_sheet",
+        "CREDITOS.md": "credits",
+        "PRESERVADO_POR.md": "preserved_by",
+    }
+    selected_roles = {
+        item.get("role")
+        for item in plan.get("documentation", [])
+        if isinstance(item, dict) and item.get("workspace_path")
+    }
+    for name, payload in templates.items():
+        role = required_roles[name]
+        target = docs / name
+        if role in selected_roles:
+            continue
+        if not target.exists():
+            target.write_text(payload, encoding="utf-8", newline="\n")
+            selected.append(
+                {
+                    "id": f"generated-{role}",
+                    "role": role,
+                    "canonical_name": name,
+                    "source_present": False,
+                    "status": "generated-template",
+                    "path": target.relative_to(capsule_root).as_posix(),
+                    "bytes": target.stat().st_size,
+                    "sha256": sha256_file(target),
+                }
+            )
+    return selected
 
 def _capsule_document(
     *,
@@ -601,7 +781,7 @@ def _capsule_document(
             "windows" if adapter == "windows" else "linux"
         )
         dependencies = [game_id]
-        if preferred_id is not None and adapter in {"wine", "bottles"}:
+        if preferred_id is not None and adapter in {"wine", "bottles", "umu"}:
             dependencies.append(preferred_id)
         if adapter == "wine":
             launch_entry = f"prefix/{destination}/{entry}"
@@ -611,6 +791,10 @@ def _capsule_document(
             launch_entry = f"{destination}/{entry}"
             work = plan["layout"]["working_directory"]
             contract = "host-contracts/linux-bottles.json"
+        elif adapter == "umu":
+            launch_entry = f"prefix/{destination}/{entry}"
+            work = f"prefix/{plan['layout']['working_directory']}"
+            contract = "host-contracts/linux-umu.json"
         elif adapter == "windows":
             launch_entry = f"game/{entry}"
             work = "game"
@@ -647,12 +831,7 @@ def _capsule_document(
         "capsule_id": identity["capsule_id"],
         "sanitized_fixture": False,
         "game": game,
-        "documents": {
-            "readme": "docs/00_README.md",
-            "game_sheet": "docs/FICHA_DEL_JUEGO.md",
-            "credits": "docs/CREDITOS.md",
-            "preserved_by": "docs/PRESERVADO_POR.md",
-        },
+        "documents": _document_paths(plan),
         "objects": objects,
         "persistent_state": persistent,
         "profiles": profiles,
@@ -1184,10 +1363,12 @@ def commit_workspace(
     """
     workspace = _regular_root(workspace, "workspace")
     vault = _regular_root(vault, "vault")
-    plan = validate_plan(
-        _load_required_json(workspace / "IMPORT_PLAN.json", "IMPORT_PLAN.json"),
-        phase="commit",
+    raw_plan = _load_required_json(
+        workspace / "IMPORT_PLAN.json",
+        "IMPORT_PLAN.json",
     )
+    require_prepared_plan_contract(raw_plan)
+    plan = validate_plan(raw_plan, phase="commit")
     verification = verify_workspace(workspace)
     if verification.get("status") != "verified":
         raise ImporterError("el workspace no está verificado")
@@ -1305,7 +1486,11 @@ def commit_workspace(
     root_backups = dict(before_documents)
 
     try:
-        _write_templates(capsule_stage, plan["identity"])
+        documentation_inventory = _publish_documentation(
+            capsule_stage,
+            workspace=workspace,
+            plan=plan,
+        )
         protected = _protected_files(workspace, plan)
         preferred_runner = None
         if runner_object is not None:
@@ -1323,6 +1508,7 @@ def commit_workspace(
         )
         supplemental_inventory = _copy_supplemental(
             capsule_stage,
+            workspace=workspace,
             plan=plan,
         )
         write_json(capsule_stage / "capsule.json", capsule)
@@ -1341,6 +1527,7 @@ def commit_workspace(
                 receipt.get("functional_retest_required")
             ),
             "supplemental_content": supplemental_inventory,
+            "documentation": documentation_inventory,
             "profiles": {
                 item["id"]: item.get("status", "candidate")
                 for item in plan["profiles"] if item.get("enabled")
@@ -1379,6 +1566,7 @@ def commit_workspace(
             "privacy-sanitization.json",
             "state-closure.json",
             "state-extraction.json",
+            "selected-components.json",
         ):
             source = workspace / "reports" / name
             if source.is_file() and not source.is_symlink():
@@ -1389,7 +1577,11 @@ def commit_workspace(
             capsule_evidence=evidence,
             private_root=private_stage,
         )
-        shutil.copy2(workspace / "IMPORT_PLAN.json", evidence / "IMPORT_PLAN.json")
+        public_plan_path = workspace / "PUBLIC_IMPORT_PLAN.json"
+        if public_plan_path.is_file() and not public_plan_path.is_symlink():
+            shutil.copy2(public_plan_path, evidence / "IMPORT_PLAN.json")
+        else:
+            write_json(evidence / "IMPORT_PLAN.json", public_plan(plan))
         shutil.copy2(
             workspace / "PREPARE_RECEIPT.json",
             evidence / "PREPARE_RECEIPT.json",
@@ -1435,28 +1627,43 @@ def commit_workspace(
         )
         if not core_audit.get("valid"):
             raise ImporterError("el núcleo rechazó la cápsula candidata")
-        preserve = run_core_json(
-            [
-                "preserve-state",
-                "--capsule", str(capsule_stage / "capsule.json"),
-                "--state-root", str(state_root),
-                "--backup", str(state_stage / "accepted"),
-                "--confirm-stopped",
-            ],
-            plan=plan,
-        )
-        verify_state = run_core_json(
-            [
-                "verify-state-backup",
-                "--capsule", str(capsule_stage / "capsule.json"),
-                "--backup", str(state_stage / "accepted"),
-            ],
-            plan=plan,
-        )
-        if not verify_state.get("verified"):
-            raise ImporterError("el backup accepted generado no se verificó")
 
-        # Remove the temporary live state after the core has sealed the backup.
+        backup_declarations = [
+            item
+            for item in capsule.get("persistent_state", [])
+            if item.get("backup", True)
+        ]
+        if backup_declarations:
+            preserve = run_core_json(
+                [
+                    "preserve-state",
+                    "--capsule", str(capsule_stage / "capsule.json"),
+                    "--state-root", str(state_root),
+                    "--backup", str(state_stage / "accepted"),
+                    "--confirm-stopped",
+                ],
+                plan=plan,
+            )
+            verify_state = run_core_json(
+                [
+                    "verify-state-backup",
+                    "--capsule", str(capsule_stage / "capsule.json"),
+                    "--backup", str(state_stage / "accepted"),
+                ],
+                plan=plan,
+            )
+            if not verify_state.get("verified"):
+                raise ImporterError("el backup accepted generado no se verificó")
+            state_backup_status = "verified"
+        else:
+            # No state was selected. The core intentionally rejects
+            # preserve-state when the capsule has no backup-enabled
+            # declarations, so do not manufacture an empty backup.
+            preserve = {"backup_id": None}
+            verify_state = {"verified": None}
+            state_backup_status = "not-applicable"
+
+        # The temporary live-state tree is never part of the published Vault.
         shutil.rmtree(state_root, ignore_errors=True)
 
         capsule_digest = sha256_file(capsule_stage / "capsule.json")
@@ -1541,7 +1748,7 @@ def commit_workspace(
                 "operation_id": operation_id,
                 "capsule_id": capsule_id,
                 "status": "candidate-imported",
-                "importer_version": "0.2.1",
+                "importer_version": __version__,
                 "save_set_count": save_index["save_set_count"],
                 "runner_binding": plan["runner"].get("binding"),
             }
@@ -1552,12 +1759,12 @@ def commit_workspace(
 
         receipt_document = {
             "schema": 0,
-            "operation": "import-game-via-importer-v2",
+            "operation": "import-game-via-importer-v3",
             "operation_id": operation_id,
             "status": "planned" if dry_run else "candidate-imported",
             "capsule_id": capsule_id,
             "created_at": timestamp,
-            "importer_version": "0.2.1",
+            "importer_version": __version__,
             "core_version": core_version(plan),
             "source_workspace": {
                 "neutral_object_sha256": game_digest,
@@ -1574,6 +1781,7 @@ def commit_workspace(
                 "runner_new": runner_new,
             },
             "state": {
+                "backup_status": state_backup_status,
                 "accepted_backup_id": preserve.get("backup_id"),
                 "accepted_verified": verify_state.get("verified"),
                 "save_set_count": save_index["save_set_count"],
@@ -1581,6 +1789,7 @@ def commit_workspace(
                 "required_state_downgrades": downgrades,
             },
             "supplemental_content": supplemental_inventory,
+            "documentation": documentation_inventory,
             "bottles_evidence": bottles_evidence,
             "profiles": [
                 {
@@ -1739,6 +1948,8 @@ def commit_workspace(
             ),
             "runner_binding": plan["runner"].get("binding"),
             "save_set_count": save_index["save_set_count"],
+            "supplemental_content": supplemental_inventory,
+            "documentation": documentation_inventory,
             "profiles": {
                 item["id"]: item.get("status")
                 for item in plan["profiles"] if item.get("enabled")

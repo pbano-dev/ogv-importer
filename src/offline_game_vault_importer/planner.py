@@ -7,10 +7,11 @@ from typing import Any
 
 from .errors import ImporterError
 from .sanitization import validate_sanitization_rules
+from .naming import canonical_profile_id, suggest_identifiers
 
 _CAPSULE_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 _STATE_ID_RE = _CAPSULE_ID_RE
-_ALLOWED_MARKERS = {"[RELLENAR]", "[VERIFICAR]", "[NO PROBADO]"}
+_ALLOWED_MARKERS = {"[RELLENAR]", "[VERIFICAR]", "[NO PROBADO]", "[NO APLICA]"}
 
 
 def _first(items: list[dict[str, Any]], label: str) -> dict[str, Any]:
@@ -244,33 +245,82 @@ def build_plan(scan: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def new_manual_plan() -> dict[str, Any]:
-    """Return an editable plan for manual component selection."""
+def _default_profiles() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": canonical_profile_id("bottles"),
+            "adapter": "bottles",
+            "platform": "linux",
+            "status": "candidate",
+            "enabled": True,
+        },
+        {
+            "id": canonical_profile_id("wine"),
+            "adapter": "wine",
+            "platform": "linux",
+            "status": "candidate",
+            "enabled": False,
+        },
+        {
+            "id": canonical_profile_id("umu"),
+            "adapter": "umu",
+            "platform": "linux",
+            "status": "candidate",
+            "enabled": False,
+        },
+        {
+            "id": canonical_profile_id("windows"),
+            "adapter": "windows",
+            "platform": "windows",
+            "status": "not_tested",
+            "enabled": False,
+        },
+    ]
+
+
+def new_prepared_plan(
+    *,
+    title: str | None = None,
+    game_directory: str | None = None,
+) -> dict[str, Any]:
+    """Return the single supported import model: an already decoupled game."""
+    suggestions = suggest_identifiers(
+        title=title,
+        game_directory=game_directory,
+    )
+    display_title = (title or "").strip() or suggestions["basis"]
+    capsule_id = suggestions["capsule_id"]
+    destination = suggestions["game_destination_in_prefix"]
     return {
         "schema": 0,
-        "contract": "ogv-import-plan-v2",
+        "contract": "ogv-import-plan-v3",
         "status": "draft",
         "source": {
-            "type": "manual-components-v1",
-            "package_name": "manual-selection",
-            "game_archive": None,
-            "game_archive_sha256": None,
-            "bottle_root_in_archive": None,
+            "type": "prepared-offline-game-directory-v1",
+            "game_directory": game_directory,
+            "steam_independent": True,
+            "legitimate_source": True,
+            "third_party_drm": "declared-absent",
+            "preparation": {
+                "steamworks": "gbe_fork-or-goldberg-or-not-required",
+                "steamstub": "steamless-or-not-required",
+                "performed_before_import": True,
+            },
         },
         "identity": {
-            "title": "[RELLENAR]",
-            "edition": "[RELLENAR]",
+            "title": display_title,
+            "edition": "Standard",
             "source_store": "Steam",
-            "appid": "[RELLENAR]",
+            "appid": None,
             "preserved_version": "[RELLENAR]",
-            "capsule_id": "[RELLENAR]",
+            "capsule_id": capsule_id,
         },
         "layout": {
             "game_root_in_archive": None,
-            "game_destination_in_prefix": "drive_c/Games/[RELLENAR]",
+            "game_destination_in_prefix": destination,
             "entrypoint_candidates_relative_to_game": [],
             "entrypoint": "[RELLENAR]",
-            "working_directory": "drive_c/Games/[RELLENAR]",
+            "working_directory": destination,
             "bottles_metadata_paths": [],
         },
         "runner": {
@@ -283,7 +333,7 @@ def new_manual_plan() -> dict[str, Any]:
             "source_root": None,
             "wine_path": None,
             "wineserver_path": None,
-            "compatible_backends": ["direct-wine", "bottles"],
+            "compatible_backends": ["direct-wine", "bottles", "umu"],
         },
         "persistent_state": {
             "items": [],
@@ -294,34 +344,13 @@ def new_manual_plan() -> dict[str, Any]:
             "baseline_state": "embedded-or-unknown",
         },
         "supplemental_content": [],
+        "documentation": [],
         "privacy_sanitization": {"wine_installer_source_lists": []},
-        "profiles": [
-            {
-                "id": "linux-bottles-flatpak",
-                "adapter": "bottles",
-                "platform": "linux",
-                "status": "candidate",
-                "enabled": True,
-            },
-            {
-                "id": "linux-direct-wine",
-                "adapter": "wine",
-                "platform": "linux",
-                "status": "candidate",
-                "enabled": True,
-            },
-            {
-                "id": "windows-native",
-                "adapter": "windows",
-                "platform": "windows",
-                "status": "not_tested",
-                "enabled": True,
-            },
-        ],
+        "profiles": _default_profiles(),
         "policy": {
             "write_vault": False,
-            "preserve_source_archive": True,
-            "strip_bottles_metadata_from_neutral_object": True,
+            "preserve_source_archive": False,
+            "strip_bottles_metadata_from_neutral_object": False,
             "automatic_drm_changes": False,
             "automatic_save_deletion": False,
             "privacy_review_required": True,
@@ -332,7 +361,7 @@ def new_manual_plan() -> dict[str, Any]:
         "core": {"source_root": None, "command": None},
         "acceptance_required": [
             "materialization-clean",
-            "launch-without-save",
+            "launch-without-steam",
             "launch-with-selected-save",
             "normal-gameplay",
             "normal-exit",
@@ -340,12 +369,36 @@ def new_manual_plan() -> dict[str, Any]:
             "state-preservation-on-removal",
             "clean-restoration",
         ],
+        "naming_examples": suggestions,
         "notes": [
-            "Plan manual: la selección explícita del usuario es la autoridad.",
-            "La ausencia de runner no bloquea la importación candidata.",
+            "El único origen admitido es un directorio jugable ya desacoplado de Steam.",
+            "El importador no aplica Steamless ni sustituye DLLs de Steamworks.",
+            "La selección explícita del usuario es la autoridad.",
+            "La importación estructural no concede aceptación funcional.",
         ],
     }
 
+
+def new_manual_plan() -> dict[str, Any]:
+    """Compatibility alias for 0.2.x callers; returns the v3 prepared-game plan."""
+    return new_prepared_plan()
+
+
+def require_prepared_plan_contract(plan: dict[str, Any]) -> None:
+    """Reject every public import contract except the prepared-game v3 model."""
+    if not isinstance(plan, dict) or plan.get("contract") != "ogv-import-plan-v3":
+        raise ImporterError(
+            "solo se admite contract=ogv-import-plan-v3; "
+            "los planes históricos ya no forman parte del flujo público"
+        )
+    source = plan.get("source")
+    if not isinstance(source, dict) or source.get("type") != (
+        "prepared-offline-game-directory-v1"
+    ):
+        raise ImporterError(
+            "solo se admite source.type="
+            "prepared-offline-game-directory-v1"
+        )
 
 def unresolved_markers(value: Any, path: str = "$") -> list[str]:
     found: list[str] = []
@@ -370,12 +423,12 @@ def _safe_relative(value: Any, label: str) -> str:
 
 
 def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Return an in-memory v2 plan while preserving v1 selections."""
-    if plan.get("contract") == "ogv-import-plan-v2":
+    """Return an in-memory v3 plan while preserving earlier explicit selections."""
+    if plan.get("contract") == "ogv-import-plan-v3":
         result = deepcopy(plan)
-    elif plan.get("contract") == "ogv-neutral-import-plan-v1":
+    elif plan.get("contract") in {"ogv-import-plan-v2", "ogv-neutral-import-plan-v1"}:
         result = deepcopy(plan)
-        result["contract"] = "ogv-import-plan-v2"
+        result["contract"] = "ogv-import-plan-v3"
         old_runner = result.get("runner")
         if isinstance(old_runner, dict) and "binding" not in old_runner:
             matches = old_runner.get("vault_matches")
@@ -434,6 +487,30 @@ def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
             )
     else:
         raise ImporterError("contrato de plan no admitido")
+
+    result.setdefault("documentation", [])
+    result.setdefault("supplemental_content", [])
+    result.setdefault("privacy_sanitization", {"wine_installer_source_lists": []})
+    result.setdefault("core", {"source_root": None, "command": None})
+    result.setdefault("naming_examples", suggest_identifiers(
+        title=result.get("identity", {}).get("title"),
+        game_directory=result.get("source", {}).get("game_directory"),
+    ))
+    source = result.setdefault("source", {})
+    if source.get("type") in {"manual-components-v1", "legacy-preservation-package-v1"}:
+        source["legacy_source_type"] = source.get("type")
+        source["type"] = "prepared-offline-game-directory-v1"
+    source.setdefault("steam_independent", True)
+    source.setdefault("legitimate_source", True)
+    source.setdefault("third_party_drm", "declared-absent")
+    source.setdefault(
+        "preparation",
+        {
+            "steamworks": "declared-prepared-or-not-required",
+            "steamstub": "declared-prepared-or-not-required",
+            "performed_before_import": True,
+        },
+    )
     return result
 
 
@@ -547,12 +624,163 @@ def _validate_state(plan: dict[str, Any], *, for_prepare: bool) -> None:
         )
 
 
+def _validate_source(plan: dict[str, Any], *, for_commit: bool) -> None:
+    source = plan.get("source")
+    if not isinstance(source, dict):
+        raise ImporterError("source inválido")
+    if source.get("type") != "prepared-offline-game-directory-v1":
+        raise ImporterError(
+            "solo se admite source.type=prepared-offline-game-directory-v1"
+        )
+    for key in ("steam_independent", "legitimate_source"):
+        if source.get(key) is not True:
+            raise ImporterError(f"source.{key} debe confirmarse")
+    if source.get("third_party_drm") != "declared-absent":
+        raise ImporterError(
+            "el flujo preparado requiere third_party_drm=declared-absent"
+        )
+    preparation = source.get("preparation")
+    if not isinstance(preparation, dict) or preparation.get(
+        "performed_before_import"
+    ) is not True:
+        raise ImporterError(
+            "source.preparation.performed_before_import debe ser true"
+        )
+
+
+def _validate_profiles(plan: dict[str, Any]) -> None:
+    profiles = plan.get("profiles")
+    if not isinstance(profiles, list):
+        raise ImporterError("profiles debe ser una lista")
+    seen: set[str] = set()
+    enabled = 0
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            raise ImporterError("perfil inválido")
+        profile_id = profile.get("id")
+        if not isinstance(profile_id, str) or not _CAPSULE_ID_RE.fullmatch(
+            profile_id
+        ):
+            raise ImporterError("profile.id no es portable")
+        if profile_id in seen:
+            raise ImporterError(f"profile.id duplicado: {profile_id}")
+        seen.add(profile_id)
+        if profile.get("enabled") is True:
+            enabled += 1
+        adapter = profile.get("adapter")
+        if adapter not in {"bottles", "wine", "umu", "windows", "other"}:
+            raise ImporterError(f"adaptador de perfil no admitido: {adapter}")
+        status = profile.get("status")
+        if status == "verified":
+            raise ImporterError(
+                "el importer no puede publicar perfiles verified"
+            )
+        if status not in {
+            "candidate",
+            "experimental",
+            "not_tested",
+            "unavailable",
+        }:
+            raise ImporterError(f"estado de perfil no admitido: {status}")
+    if enabled == 0:
+        raise ImporterError("el plan debe habilitar al menos un perfil")
+
+
+def _validate_attachments(plan: dict[str, Any]) -> None:
+    for key in ("supplemental_content", "documentation"):
+        values = plan.get(key, [])
+        if not isinstance(values, list):
+            raise ImporterError(f"{key} debe ser una lista")
+        seen: set[str] = set()
+        for item in values:
+            if not isinstance(item, dict):
+                raise ImporterError(f"{key} contiene una entrada inválida")
+            item_id = item.get("id")
+            if not isinstance(item_id, str) or not _CAPSULE_ID_RE.fullmatch(
+                item_id
+            ):
+                raise ImporterError(f"{key}.id no es portable")
+            if item_id in seen:
+                raise ImporterError(f"{key}.id duplicado: {item_id}")
+            seen.add(item_id)
+            source_path = item.get("source_path")
+            if source_path is not None and not isinstance(source_path, str):
+                raise ImporterError(f"{key}.{item_id}.source_path inválido")
+            workspace_path = item.get("workspace_path")
+            if workspace_path is not None:
+                _safe_relative(
+                    workspace_path, f"{key}.{item_id}.workspace_path"
+                )
+    canonical_names: set[str] = set()
+    for item in plan.get("documentation", []):
+        canonical = item.get("canonical_name")
+        if not isinstance(canonical, str) or not canonical:
+            raise ImporterError("documentation.canonical_name es obligatorio")
+        if "/" in canonical or "\\" in canonical or canonical in {".", ".."}:
+            raise ImporterError("documentation.canonical_name no es portable")
+        if canonical in canonical_names:
+            raise ImporterError(
+                f"nombre documental canónico duplicado: {canonical}"
+            )
+        canonical_names.add(canonical)
+        role = item.get("role")
+        if role not in {
+            "readme",
+            "game_sheet",
+            "credits",
+            "preserved_by",
+            "technical_notes",
+            "addendum",
+            "other",
+        }:
+            raise ImporterError(f"rol documental no admitido: {role}")
+
+
+def public_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Return a publication-safe copy without host-local source paths."""
+    result = deepcopy(plan)
+    source = result.get("source")
+    if isinstance(source, dict):
+        for key in (
+            "game_directory",
+            "prefix_directory",
+            "source_package",
+            "game_archive",
+        ):
+            if key in source:
+                source[key] = None
+    runner = result.get("runner")
+    if isinstance(runner, dict):
+        for key in ("source_path", "source_root"):
+            if key in runner:
+                runner[key] = None
+    for section in ("persistent_state",):
+        value = result.get(section)
+        if not isinstance(value, dict):
+            continue
+        for item in value.get("items", []):
+            if isinstance(item, dict):
+                item["source_path"] = None
+    for section in ("supplemental_content", "documentation"):
+        for item in result.get(section, []):
+            if isinstance(item, dict):
+                item["source_path"] = None
+    core = result.get("core")
+    if isinstance(core, dict):
+        core["source_root"] = None
+        core["command"] = None
+    result["publication_redaction"] = {
+        "host_source_paths": "removed",
+        "core_command": "removed",
+    }
+    return result
+
 def validate_plan(
     plan: dict[str, Any],
     *,
     phase: str = "prepare",
 ) -> dict[str, Any]:
-    """Validate and return a normalized v2 plan.
+    """Validate and return a normalized v3 plan.
 
     ``prepare`` accepts unresolved state classification and an unbound runner.
     ``commit`` additionally requires the identity and entrypoint needed to
@@ -569,12 +797,9 @@ def validate_plan(
     _validate_layout(normalized, for_commit=phase == "commit")
     _validate_state(normalized, for_prepare=phase == "prepare")
 
-    profiles = normalized.get("profiles")
-    if not isinstance(profiles, list) or not any(
-        isinstance(item, dict) and item.get("enabled") is True
-        for item in profiles
-    ):
-        raise ImporterError("el plan debe habilitar al menos un perfil")
+    _validate_source(normalized, for_commit=phase == "commit")
+    _validate_profiles(normalized)
+    _validate_attachments(normalized)
 
     runner = normalized.get("runner")
     if not isinstance(runner, dict):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import stat
@@ -7,7 +8,51 @@ from typing import Any
 
 from .archive import inspect_tar
 from .errors import ImporterError
-from .util import read_json, sha256_file
+from .prepare import _inventory
+from .util import canonical_json_bytes, read_json, sha256_file
+
+
+def _component_fingerprint(path: Path) -> dict[str, Any]:
+    if path.is_symlink() or not path.exists():
+        raise ImporterError("componente seleccionado ausente o symlink")
+    if path.is_file():
+        return {
+            "kind": "file",
+            "bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+    inventory = _inventory(path)
+    return {
+        "kind": "directory",
+        "entry_count": len(inventory.get("entries", [])),
+        "inventory_sha256": hashlib.sha256(
+            canonical_json_bytes(inventory)
+        ).hexdigest(),
+    }
+
+
+def _verify_component_receipts(
+    root: Path,
+    items: list[dict[str, Any]],
+    label: str,
+) -> int:
+    verified = 0
+    for item in items:
+        raw = item.get("workspace_path")
+        expected = item.get("fingerprint")
+        if not isinstance(raw, str) or not raw:
+            continue
+        pure = PurePosixPath(raw)
+        if pure.is_absolute() or ".." in pure.parts:
+            raise ImporterError(f"{label}.{item.get('id')}.workspace_path inseguro")
+        candidate = root.joinpath(*pure.parts)
+        actual = _component_fingerprint(candidate)
+        if isinstance(expected, dict) and actual != expected:
+            raise ImporterError(
+                f"fingerprint incorrecto: {label}/{item.get('id')}"
+            )
+        verified += 1
+    return verified
 
 
 def verify_workspace(workspace: Path) -> dict[str, Any]:
@@ -76,7 +121,14 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
     )
     absent_state: list[str] = []
     for item in plan["persistent_state"]["items"]:
-        state_path = PurePosixPath(item["path"])
+        raw_state_path = item.get("path")
+        if (
+            not isinstance(raw_state_path, str)
+            or not raw_state_path
+            or item.get("disposition") in {"unbound", "embedded", "exclude"}
+        ):
+            continue
+        state_path = PurePosixPath(raw_state_path)
         prefix_candidate = neutral / "payload/prefix-template" / state_path
         if prefix_candidate.exists() or prefix_candidate.is_symlink():
             raise ImporterError(
@@ -94,6 +146,43 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
                 )
         absent_state.append(item["id"])
 
+    selected_components_verified = 0
+    component_report_path = root / "reports/selected-components.json"
+    if component_report_path.is_file() and not component_report_path.is_symlink():
+        component_report = read_json(
+            component_report_path, "selected-components.json"
+        )
+        for section in ("supplemental_content", "documentation"):
+            selected_components_verified += _verify_component_receipts(
+                root,
+                component_report.get(section, []),
+                section,
+            )
+    selected_components_verified += _verify_component_receipts(
+        root,
+        receipt.get("state_items", []),
+        "persistent_state",
+    )
+    runner_receipt = receipt.get("runner")
+    if isinstance(runner_receipt, dict):
+        selected_components_verified += _verify_component_receipts(
+            root,
+            [runner_receipt],
+            "runner",
+        )
+
+    public_plan = root / "PUBLIC_IMPORT_PLAN.json"
+    if public_plan.is_file() and not public_plan.is_symlink():
+        public = read_json(public_plan, "PUBLIC_IMPORT_PLAN.json")
+        if public.get("source", {}).get("game_directory") is not None:
+            raise ImporterError("PUBLIC_IMPORT_PLAN conserva game_directory")
+        for section in ("supplemental_content", "documentation"):
+            for item in public.get(section, []):
+                if item.get("source_path") is not None:
+                    raise ImporterError(
+                        f"PUBLIC_IMPORT_PLAN conserva source_path en {section}"
+                    )
+
     archive_report = inspect_tar(archive, full_hash=False)
     return {
         "schema": 0,
@@ -104,5 +193,7 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
         "inventory_files_verified": verified_files,
         "inventory_symlinks_verified": verified_symlinks,
         "state_items_absent_from_neutral_object": absent_state,
+        "selected_components_verified": selected_components_verified,
+        "public_plan_verified": public_plan.is_file(),
         "vault_modified": False,
     }

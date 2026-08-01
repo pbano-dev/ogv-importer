@@ -8,7 +8,9 @@ from typing import Any
 
 from .errors import ImporterError
 from .gui_model import ImportSession
-from .planner import new_manual_plan
+from . import __version__
+from .planner import new_prepared_plan
+from .naming import suggest_identifiers
 from .util import write_json
 
 try:
@@ -32,7 +34,7 @@ if Gtk is not None:
         def __init__(self, application: Gtk.Application):
             super().__init__(
                 application=application,
-                title="OfflineGameVault Importer 0.2.1",
+                title=f"OfflineGameVault Importer {__version__}",
             )
             self.set_default_size(1040, 760)
             self.session = ImportSession()
@@ -62,7 +64,7 @@ if Gtk is not None:
             title.set_xalign(0)
             title.set_hexpand(True)
             header.append(title)
-            new_button = Gtk.Button(label="Nuevo plan manual")
+            new_button = Gtk.Button(label="Nuevo plan")
             new_button.connect("clicked", self._new_manual)
             header.append(new_button)
             load_button = Gtk.Button(label="Cargar plan…")
@@ -172,35 +174,33 @@ if Gtk is not None:
             _, box = self._page("Origen")
             note = Gtk.Label(
                 label=(
-                    "Puede trabajar desde un paquete histórico o señalar "
-                    "manualmente el juego y el prefix. El runner es opcional."
+                    "Seleccione un directorio de juego ya funcional sin Steam. "
+                    "El prefix, runner, partidas, contenido adicional y documentación "
+                    "son opcionales."
                 )
             )
             note.set_wrap(True)
             note.set_xalign(0)
             box.append(note)
             self._path_row(box, "vault", "Vault de destino", folder=True)
-            self._path_row(box, "workspace", "Workspace", folder=True)
+            self._path_row(box, "workspace", "Workspace nuevo", folder=True)
             self._path_row(
-                box, "source_package", "Paquete histórico", folder=True
+                box, "manual_game", "Directorio del juego desacoplado", folder=True
             )
-            self._path_row(box, "manual_game", "Juego (manual)", folder=True)
-            self._path_row(box, "manual_prefix", "Prefix (manual)", folder=True)
+            self._path_row(box, "manual_prefix", "Prefix inicial (opcional)", folder=True)
             self._path_row(box, "core_root", "Checkout del núcleo", folder=True)
 
             actions = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL,
                 spacing=8,
             )
-            scan = Gtk.Button(label="Escanear paquete")
-            scan.connect("clicked", self._scan_package)
-            actions.append(scan)
-            prepare = Gtk.Button(label="Preparar paquete")
-            prepare.connect("clicked", self._prepare_legacy)
+            inspect = Gtk.Button(label="Inspeccionar y proponer")
+            inspect.connect("clicked", self._inspect_game)
+            actions.append(inspect)
+            prepare = Gtk.Button(label="Preparar importación")
+            prepare.add_css_class("suggested-action")
+            prepare.connect("clicked", self._prepare_manual)
             actions.append(prepare)
-            manual = Gtk.Button(label="Preparar selección manual")
-            manual.connect("clicked", self._prepare_manual)
-            actions.append(manual)
             box.append(actions)
 
         def _build_identity_page(self) -> None:
@@ -222,9 +222,17 @@ if Gtk is not None:
             ):
                 self._field(grid, row, key, label)
 
+            actions = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL,
+                spacing=8,
+            )
+            suggest = Gtk.Button(label="Proponer nomenclatura")
+            suggest.connect("clicked", self._suggest_naming)
+            actions.append(suggest)
             save = Gtk.Button(label="Aplicar identidad y layout")
             save.connect("clicked", self._apply_identity)
-            box.append(save)
+            actions.append(save)
+            box.append(actions)
 
         def _build_components_page(self) -> None:
             _, box = self._page("Componentes")
@@ -291,6 +299,36 @@ if Gtk is not None:
             self.supplemental_list.set_wrap(True)
             extra_box.append(self.supplemental_list)
 
+            docs = Gtk.Frame(label="Documentación añadida")
+            docs_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL, spacing=8
+            )
+            docs_box.set_margin_top(8)
+            docs_box.set_margin_bottom(8)
+            docs_box.set_margin_start(8)
+            docs_box.set_margin_end(8)
+            docs.set_child(docs_box)
+            box.append(docs)
+            self._path_row(
+                docs_box, "documentation_source", "Documento", folder=False
+            )
+            docs_grid = Gtk.Grid(column_spacing=12, row_spacing=8)
+            docs_box.append(docs_grid)
+            self._field(docs_grid, 0, "documentation_id", "ID")
+            self._field(docs_grid, 1, "documentation_role", "Rol")
+            self._field(
+                docs_grid, 2, "documentation_name", "Nombre canónico"
+            )
+            doc_add = Gtk.Button(label="Añadir documentación")
+            doc_add.connect("clicked", self._add_documentation)
+            docs_box.append(doc_add)
+            self.documentation_list = Gtk.Label(
+                label="Sin documentación seleccionada; se generarán plantillas."
+            )
+            self.documentation_list.set_xalign(0)
+            self.documentation_list.set_wrap(True)
+            docs_box.append(self.documentation_list)
+
         def _build_state_page(self) -> None:
             _, box = self._page("Partidas y estado")
             note = Gtk.Label(
@@ -353,19 +391,37 @@ if Gtk is not None:
         def _build_profiles_page(self) -> None:
             _, box = self._page("Perfiles")
             self.profile_checks: dict[str, Gtk.CheckButton] = {}
-            for profile_id, label in (
-                ("linux-bottles-flatpak", "Bottles — candidate"),
-                ("linux-direct-wine", "Direct-Wine — candidate"),
-                ("windows-native", "Windows — not_tested"),
+            self.profile_entries: dict[str, Gtk.Entry] = {}
+            for adapter, label in (
+                ("bottles", "Bottles"),
+                ("wine", "Direct-Wine"),
+                ("umu", "UMU/Proton"),
+                ("windows", "Windows nativo"),
             ):
+                row = Gtk.Box(
+                    orientation=Gtk.Orientation.HORIZONTAL,
+                    spacing=8,
+                )
                 check = Gtk.CheckButton(label=label)
-                check.set_active(True)
-                self.profile_checks[profile_id] = check
-                box.append(check)
+                self.profile_checks[adapter] = check
+                row.append(check)
+                entry = Gtk.Entry()
+                entry.set_hexpand(True)
+                entry.set_placeholder_text(
+                    {
+                        "bottles": "linux-bottles-flatpak",
+                        "wine": "linux-direct-wine",
+                        "umu": "linux-umu-proton",
+                        "windows": "windows-native",
+                    }[adapter]
+                )
+                self.profile_entries[adapter] = entry
+                row.append(entry)
+                box.append(row)
             note = Gtk.Label(
                 label=(
-                    "Un perfil candidato puede materializarse para probarlo. "
-                    "No se declara verificado durante la importación."
+                    "Los ID son editables. La importación solo publica candidate o "
+                    "not_tested; nunca verified."
                 )
             )
             note.set_xalign(0)
@@ -461,7 +517,7 @@ if Gtk is not None:
             )
             self.status.set_text(f"{label}: completado")
             self.summary.set_text(rendered)
-            if label == "Escaneo":
+            if label == "Inspección":
                 # Load the automatically proposed AppID, layout and runner into
                 # the editable fields. Detection remains advisory: the user can
                 # replace every value before preparing the workspace.
@@ -474,10 +530,15 @@ if Gtk is not None:
             return self.entries[key].get_text().strip()
 
         def _new_manual(self, _button: Gtk.Button) -> None:
-            self.session.plan = new_manual_plan()
+            game = self._entry("manual_game") if "manual_game" in self.entries else ""
+            title = self._entry("title") if "title" in self.entries else ""
+            self.session.plan = new_prepared_plan(
+                title=title or None,
+                game_directory=game or None,
+            )
             self.session.plan_path = None
             self._populate()
-            self.status.set_text("Plan manual nuevo.")
+            self.status.set_text("Plan nuevo para juego desacoplado.")
 
         def _load_plan_dialog(self, _button: Gtk.Button) -> None:
             dialog = Gtk.FileChooserNative(
@@ -524,10 +585,28 @@ if Gtk is not None:
                 "runner_source": plan["runner"].get("source_path") or "",
                 "runner_id": plan["runner"].get("preferred_id") or "",
                 "runner_sha256": plan["runner"].get("sha256") or "",
+                "manual_game": plan.get("source", {}).get("game_directory") or "",
+                "manual_prefix": plan.get("source", {}).get("prefix_directory") or "",
             }
             for key, value in values.items():
                 if key in self.entries:
                     self.entries[key].set_text(str(value))
+            examples = plan.get("naming_examples", {})
+            state_examples = examples.get("state_examples", {})
+            if state_examples:
+                self.entries["state_id"].set_placeholder_text(
+                    state_examples.get("state_id", "")
+                )
+                self.entries["save_set_id"].set_placeholder_text(
+                    state_examples.get("save_set_id", "")
+                )
+            supplemental_examples = examples.get(
+                "supplemental_examples", {}
+            )
+            if supplemental_examples:
+                self.entries["supplemental_id"].set_placeholder_text(
+                    supplemental_examples.get("artbook", "")
+                )
             bindings = [
                 "select-at-materialization", "preferred", "fixed", "none"
             ]
@@ -551,18 +630,27 @@ if Gtk is not None:
             core_root = plan.get("core", {}).get("source_root")
             if core_root:
                 self.entries["core_root"].set_text(core_root)
+            for profile in plan.get("profiles", []):
+                adapter = profile.get("adapter")
+                if adapter in self.profile_checks:
+                    self.profile_checks[adapter].set_active(
+                        bool(profile.get("enabled"))
+                    )
+                    self.profile_entries[adapter].set_text(
+                        str(profile.get("id") or "")
+                    )
             self._refresh()
 
         def _sync_paths(self) -> None:
             vault = self._entry("vault")
             workspace = self._entry("workspace")
-            source = self._entry("source_package")
+            game = self._entry("manual_game")
             if vault:
                 self.session.vault = Path(vault)
             if workspace:
                 self.session.workspace = Path(workspace)
-            if source:
-                self.session.source_package = Path(source)
+            if game:
+                self.session.game_directory = Path(game)
             if self.session.plan is not None:
                 core = self._entry("core_root")
                 self.session.plan.setdefault("core", {})["source_root"] = (
@@ -671,15 +759,85 @@ if Gtk is not None:
             except Exception as exc:
                 self.status.set_text(f"Error: {exc}")
 
+        def _suggest_naming(self, _button=None) -> None:
+            try:
+                suggestions = suggest_identifiers(
+                    title=self._entry("title") or None,
+                    game_directory=self._entry("manual_game") or None,
+                )
+                current_capsule = self._entry("capsule_id")
+                if current_capsule in {"", "[RELLENAR]", "game"}:
+                    self.entries["capsule_id"].set_text(suggestions["capsule_id"])
+                destination = suggestions["game_destination_in_prefix"]
+                current_destination = self._entry("game_destination")
+                if current_destination in {
+                    "", "[RELLENAR]", "drive_c/Games/game"
+                }:
+                    self.entries["game_destination"].set_text(destination)
+                    self.entries["working_directory"].set_text(destination)
+                for adapter, value in suggestions["profiles"].items():
+                    if adapter in self.profile_entries:
+                        current = self.profile_entries[adapter].get_text().strip()
+                        if not current:
+                            self.profile_entries[adapter].set_text(value)
+                self.entries["state_id"].set_placeholder_text(
+                    suggestions["state_examples"]["state_id"]
+                )
+                self.entries["save_set_id"].set_placeholder_text(
+                    suggestions["state_examples"]["save_set_id"]
+                )
+                self.status.set_text(
+                    "Nomenclatura propuesta. Revísela antes de aplicar."
+                )
+            except Exception as exc:
+                self.status.set_text(f"Error: {exc}")
+
+        def _add_documentation(self, _button=None) -> None:
+            try:
+                role = self._entry("documentation_role") or "other"
+                canonical = self._entry("documentation_name")
+                if not canonical:
+                    canonical = {
+                        "readme": "00_README.md",
+                        "game_sheet": "FICHA_DEL_JUEGO.md",
+                        "credits": "CREDITOS.md",
+                        "preserved_by": "PRESERVADO_POR.md",
+                        "technical_notes": "NOTAS_TECNICAS_DEL_PROCESO.md",
+                    }.get(role, Path(self._entry("documentation_source")).name)
+                self.session.add_documentation(
+                    item_id=self._entry("documentation_id"),
+                    source_path=self._entry("documentation_source") or None,
+                    role=role,
+                    canonical_name=canonical,
+                )
+                for key in (
+                    "documentation_id",
+                    "documentation_source",
+                    "documentation_role",
+                    "documentation_name",
+                ):
+                    self.entries[key].set_text("")
+                self.status.set_text("Documentación añadida.")
+                self._refresh()
+            except Exception as exc:
+                self.status.set_text(f"Error: {exc}")
+
         def _apply_profiles(self, _button=None) -> None:
             if self.session.plan is None:
                 return
-            for profile in self.session.plan["profiles"]:
-                check = self.profile_checks.get(profile["id"])
-                if check is not None:
-                    profile["enabled"] = check.get_active()
-            self.status.set_text("Perfiles aplicados.")
-            self._refresh()
+            try:
+                for adapter, check in self.profile_checks.items():
+                    entry = self.profile_entries[adapter]
+                    self.session.set_profile(
+                        adapter=adapter,
+                        profile_id=entry.get_text().strip()
+                        or entry.get_placeholder_text(),
+                        enabled=check.get_active(),
+                    )
+                self.status.set_text("Perfiles aplicados.")
+                self._refresh()
+            except Exception as exc:
+                self.status.set_text(f"Error: {exc}")
 
         def _update_action_sensitivity(self) -> None:
             workspace = self.session.workspace
@@ -721,6 +879,14 @@ if Gtk is not None:
                     for item in supplemental
                 ) or "Sin contenido declarado."
             )
+            documentation = plan.get("documentation", [])
+            self.documentation_list.set_text(
+                "\n".join(
+                    f"• {item.get('id')} — {item.get('role')} — "
+                    f"{item.get('canonical_name')}"
+                    for item in documentation
+                ) or "Sin documentación seleccionada; se generarán plantillas."
+            )
             summary = {
                 "capsule_id": plan["identity"].get("capsule_id"),
                 "runner_binding": plan["runner"].get("binding"),
@@ -731,6 +897,7 @@ if Gtk is not None:
                     )
                 ),
                 "supplemental_content": len(supplemental),
+                "documentation": len(documentation),
                 "profiles": [
                     item["id"] for item in plan["profiles"]
                     if item.get("enabled")
@@ -741,36 +908,26 @@ if Gtk is not None:
             )
             self._update_action_sensitivity()
 
-        def _scan_package(self, _button=None) -> None:
-            self._sync_paths()
-            source = self.session.source_package
-            if source is None:
-                self.status.set_text("Seleccione el paquete histórico.")
+        def _inspect_game(self, _button=None) -> None:
+            game = self._entry("manual_game")
+            if not game:
+                self.status.set_text("Seleccione el directorio del juego desacoplado.")
                 return
+            title = self._entry("title") or None
             self._run_background(
-                "Escaneo",
-                lambda: self.session.scan_legacy(
-                    source, vault=self.session.vault, full_hash=False
-                ),
-            )
-
-        def _prepare_legacy(self, _button=None) -> None:
-            self._apply_identity()
-            self._apply_runner()
-            self._sync_paths()
-            if self.session.workspace is None:
-                self.status.set_text("Indique un workspace nuevo.")
-                return
-            self._run_background(
-                "Preparación de paquete",
-                lambda: self.session.prepare_legacy(
-                    self.session.workspace
-                ),
+                "Inspección",
+                lambda: self.session.inspect_game(Path(game), title=title),
             )
 
         def _prepare_manual(self, _button=None) -> None:
+            if self.session.plan is None:
+                self.status.set_text(
+                    "Inspeccione primero el directorio para crear el plan."
+                )
+                return
             self._apply_identity()
             self._apply_runner()
+            self._apply_profiles()
             self._sync_paths()
             game = self._entry("manual_game")
             prefix = self._entry("manual_prefix")
@@ -780,8 +937,8 @@ if Gtk is not None:
                 )
                 return
             self._run_background(
-                "Preparación manual",
-                lambda: self.session.prepare_manual(
+                "Preparación",
+                lambda: self.session.prepare(
                     game=Path(game),
                     prefix=Path(prefix) if prefix else None,
                     workspace=self.session.workspace,
