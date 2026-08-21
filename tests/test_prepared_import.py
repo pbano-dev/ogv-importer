@@ -79,7 +79,7 @@ class PreparedDirectoryTests(unittest.TestCase):
             title="Test Game",
             game_directory="/tmp/Test Game",
         )
-        self.assertEqual(plan["contract"], "ogv-import-plan-v3")
+        self.assertEqual(plan["contract"], "ogv-import-plan-v4")
         self.assertEqual(
             plan["source"]["type"],
             "prepared-offline-game-directory-v1",

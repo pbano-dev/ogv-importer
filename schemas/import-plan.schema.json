@@ -13,12 +13,12 @@
       "type": "string"
     }
   },
-  "$id": "https://offline-game-vault.invalid/schemas/import-plan-v3.schema.json",
+  "$id": "https://offline-game-vault.invalid/schemas/import-plan-v4.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": true,
   "properties": {
     "contract": {
-      "const": "ogv-import-plan-v3"
+      "const": "ogv-import-plan-v4"
     },
     "documentation": {
       "items": {
@@ -388,6 +388,6 @@
     "profiles",
     "policy"
   ],
-  "title": "OfflineGameVault Prepared Game Import Plan v3",
+  "title": "OfflineGameVault Prepared Game Import Plan v4",
   "type": "object"
 }

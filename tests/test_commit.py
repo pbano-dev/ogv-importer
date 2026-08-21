@@ -300,7 +300,7 @@ class PlanTests(unittest.TestCase):
             "embedded-or-unknown",
         )
 
-    def test_windows_profile_does_not_depend_on_runner(self):
+    def test_game_source_does_not_depend_on_runner(self):
         plan = new_manual_plan()
         plan["identity"].update({
             "title": "Manual Game",
@@ -340,10 +340,11 @@ class PlanTests(unittest.TestCase):
             game_object=game_object,
             runner_object=runner_object,
         )
-        profiles = {item["adapter"]: item for item in capsule["profiles"]}
-        self.assertIn("proton9", profiles["wine"]["dependencies"])
-        self.assertIn("proton9", profiles["bottles"]["dependencies"])
-        self.assertNotIn("proton9", profiles["windows"]["dependencies"])
+        self.assertEqual(len(capsule["profiles"]), 1)
+        profile = capsule["profiles"][0]
+        self.assertEqual(profile["id"], "game-source")
+        self.assertEqual(profile["adapter"], "other")
+        self.assertNotIn("proton9", profile["dependencies"])
 
 
 class CommitTests(unittest.TestCase):

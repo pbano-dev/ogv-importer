@@ -35,7 +35,7 @@ El importer **no**:
 La versión 0.3.1 utiliza un único modelo:
 
 ```text
-ogv-import-plan-v3
+ogv-import-plan-v4
 source.type = prepared-offline-game-directory-v1
 ```
 
@@ -201,6 +201,17 @@ de restauración es relativa al root de estado del perfil; no se adivina.
 
 Una partida sin destino conocido puede preservarse con `disposition=unbound`,
 pero no se declara restaurable.
+
+## Fuente de juego neutral v4
+
+La entrada principal es la **carpeta del juego que contiene sus binarios**,
+no la raíz `drive_c` de una Bottle o Wine prefix. `drive_c` describe la
+topología donde el Core volverá a colocar el juego al materializar.
+
+Un prefix de origen puede servir más adelante como contexto para detectar
+material estructural externo al directorio del juego, pero no se preserva
+completo por defecto. Backend y runner se eligen durante la materialización,
+no durante la importación.
 
 ## Contenido adicional
 

@@ -80,7 +80,9 @@ if Gtk is not None:
             self._build_identity_page()
             self._build_components_page()
             self._build_state_page()
-            self._build_profiles_page()
+            # Backend + runner are materialization-time choices in the main GUI.
+            self.profile_checks = {}
+            self.profile_entries = {}
             self._build_commit_page()
 
             status_box = Gtk.Box(

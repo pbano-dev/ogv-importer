@@ -293,7 +293,7 @@ def new_prepared_plan(
     destination = suggestions["game_destination_in_prefix"]
     return {
         "schema": 0,
-        "contract": "ogv-import-plan-v3",
+        "contract": "ogv-import-plan-v4",
         "status": "draft",
         "source": {
             "type": "prepared-offline-game-directory-v1",
@@ -346,7 +346,15 @@ def new_prepared_plan(
         "supplemental_content": [],
         "documentation": [],
         "privacy_sanitization": {"wine_installer_source_lists": []},
-        "profiles": _default_profiles(),
+        "profiles": [
+            {
+                "id": "game-source",
+                "adapter": "bottles",
+                "platform": "linux",
+                "status": "candidate",
+                "enabled": True,
+            }
+        ],
         "policy": {
             "write_vault": False,
             "preserve_source_archive": False,
@@ -372,6 +380,11 @@ def new_prepared_plan(
         "naming_examples": suggestions,
         "notes": [
             "El único origen admitido es un directorio jugable ya desacoplado de Steam.",
+            (
+                "source.game_directory apunta a la carpeta que contiene los "
+                "binarios del juego; drive_c es topología de materialización, "
+                "no el objeto de juego que se importa por defecto."
+            ),
             "El importador no aplica Steamless ni sustituye DLLs de Steamworks.",
             "La selección explícita del usuario es la autoridad.",
             "La importación estructural no concede aceptación funcional.",
@@ -386,9 +399,9 @@ def new_manual_plan() -> dict[str, Any]:
 
 def require_prepared_plan_contract(plan: dict[str, Any]) -> None:
     """Reject every public import contract except the prepared-game v3 model."""
-    if not isinstance(plan, dict) or plan.get("contract") != "ogv-import-plan-v3":
+    if not isinstance(plan, dict) or plan.get("contract") != "ogv-import-plan-v4":
         raise ImporterError(
-            "solo se admite contract=ogv-import-plan-v3; "
+            "solo se admite contract=ogv-import-plan-v4; "
             "los planes históricos ya no forman parte del flujo público"
         )
     source = plan.get("source")
@@ -424,11 +437,14 @@ def _safe_relative(value: Any, label: str) -> str:
 
 def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
     """Return an in-memory v3 plan while preserving earlier explicit selections."""
-    if plan.get("contract") == "ogv-import-plan-v3":
+    if plan.get("contract") == "ogv-import-plan-v4":
         result = deepcopy(plan)
+    elif plan.get("contract") == "ogv-import-plan-v3":
+        result = deepcopy(plan)
+        result["contract"] = "ogv-import-plan-v4"
     elif plan.get("contract") in {"ogv-import-plan-v2", "ogv-neutral-import-plan-v1"}:
         result = deepcopy(plan)
-        result["contract"] = "ogv-import-plan-v3"
+        result["contract"] = "ogv-import-plan-v4"
         old_runner = result.get("runner")
         if isinstance(old_runner, dict) and "binding" not in old_runner:
             matches = old_runner.get("vault_matches")

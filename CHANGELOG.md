@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 — 2026-08-21
+
+- New imports use `ogv-import-plan-v4`.
+- New prepared games publish one canonical backend-neutral `game-source`
+  profile backed by `ogv-game-source-v1`.
+- Backend and runner selection move out of the importer and remain
+  materialization-time user choices.
+- A preserved runner is still reusable globally but is not bound as a
+  dependency of the canonical game source.
+- `source.game_directory` is explicitly the directory containing the game
+  binaries; a complete `drive_c` is not imported as the game by default.
+
+
 ## 0.3.1 — 2026-08-01
 
 - Corregido el ensayo y commit de cápsulas sin estado persistente declarado.

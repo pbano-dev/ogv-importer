@@ -711,6 +711,18 @@ Copia adquirida legítimamente, uso personal y sin distribución.
             )
     return selected
 
+def _canonical_game_source_contract(
+    legacy_contract: dict[str, Any],
+) -> dict[str, Any]:
+    result = dict(legacy_contract)
+    result["contract"] = "ogv-game-source-v1"
+    result["runner_binding"] = "select-at-materialization"
+    result["preferred_runner"] = None
+    result.pop("backend", None)
+    result.pop("adapter", None)
+    return result
+
+
 def _capsule_document(
     *,
     plan: dict[str, Any],
@@ -781,9 +793,17 @@ def _capsule_document(
             "windows" if adapter == "windows" else "linux"
         )
         dependencies = [game_id]
-        if preferred_id is not None and adapter in {"wine", "bottles", "umu"}:
+        if (
+            preferred_id is not None
+            and adapter in {"wine", "bottles", "umu"}
+            and item.get("id") != "game-source"
+        ):
             dependencies.append(preferred_id)
-        if adapter == "wine":
+        if item.get("id") == "game-source":
+            launch_entry = f"prefix/{destination}/{entry}"
+            work = f"prefix/{plan['layout']['working_directory']}"
+            contract = "host-contracts/game-source.json"
+        elif adapter == "wine":
             launch_entry = f"prefix/{destination}/{entry}"
             work = f"prefix/{plan['layout']['working_directory']}"
             contract = "host-contracts/linux-direct-wine.json"
@@ -805,7 +825,9 @@ def _capsule_document(
             {
                 "id": item["id"],
                 "platform": platform,
-                "adapter": adapter,
+                "adapter": (
+                    "other" if item.get("id") == "game-source" else adapter
+                ),
                 "status": item.get("status", "candidate"),
                 "dependencies": dependencies,
                 "host_contract": contract,
@@ -1505,6 +1527,14 @@ def commit_workspace(
             game_object_id=game_object_id,
             preferred_runner=preferred_runner,
             protected=protected,
+        )
+        legacy_source_contract = _load_required_json(
+            capsule_stage / "host-contracts/linux-direct-wine.json",
+            "linux-direct-wine.json",
+        )
+        write_json(
+            capsule_stage / "host-contracts/game-source.json",
+            _canonical_game_source_contract(legacy_source_contract),
         )
         supplemental_inventory = _copy_supplemental(
             capsule_stage,
