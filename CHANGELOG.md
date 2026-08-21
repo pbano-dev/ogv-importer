@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 — 2026-08-21
+
+- Pass the declared archive format to Core `ingest-object` for newly
+  imported game and runner objects.
+- This makes Core generate canonical per-object manifests during ingest,
+  so a freshly imported capsule can satisfy composition manifest preflight.
+- No Vault migration, backend compatibility change, or GUI change is made.
+
+
 ## 0.4.0 — 2026-08-21
 
 - New imports use `ogv-import-plan-v4`.
