@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 — 2026-08-21
+
+- Publish present `supplemental_content` as first-class immutable objects and
+  emit the Core 0.19.7 `optional_content` capsule contract.
+- Add explicit `game-overlay` and `sidecar` placement metadata. Existing v4
+  plans without placement default conservatively to `sidecar/<content-id>`.
+- Optional objects are ingested through Core with their declared archive
+  format, so canonical manifests and sidecars are generated on ingest.
+- Supplemental content is no longer copied into
+  `02_CAPSULES/<id>/supplemental-content` by the normal commit path.
+- Symlinks and special files are rejected before optional content is packaged,
+  matching the Core materialization safety contract.
+
+
 ## 0.4.1 — 2026-08-21
 
 - Pass the declared archive format to Core `ingest-object` for newly

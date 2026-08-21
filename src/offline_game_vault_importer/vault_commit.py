@@ -723,6 +723,232 @@ def _canonical_game_source_contract(
     return result
 
 
+def _optional_safe_relative(
+    value: Any,
+    label: str,
+    *,
+    allow_dot: bool = False,
+) -> PurePosixPath:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ImporterError(f"{label} debe ser una ruta relativa no vacía")
+    if "\\" in value:
+        raise ImporterError(f"{label} debe usar separadores POSIX")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ImporterError(f"{label} no puede escapar de su destino")
+    normalized = PurePosixPath(path.as_posix())
+    if normalized == PurePosixPath(".") and not allow_dot:
+        raise ImporterError(f"{label} no puede ser '.'")
+    return normalized
+
+
+def _optional_placement(
+    item: dict[str, Any],
+    item_id: str,
+) -> dict[str, str]:
+    raw = item.get("placement")
+    if raw is None:
+        return {
+            "mode": "sidecar",
+            "destination": item_id,
+        }
+    if not isinstance(raw, dict):
+        raise ImporterError(
+            f"contenido adicional {item_id}: placement debe ser objeto"
+        )
+    mode = raw.get("mode")
+    if mode not in {"game-overlay", "sidecar"}:
+        raise ImporterError(
+            f"contenido adicional {item_id}: placement.mode no admitido"
+        )
+    if "destination" not in raw:
+        raise ImporterError(
+            f"contenido adicional {item_id}: placement.destination requerido"
+        )
+    destination = _optional_safe_relative(
+        raw.get("destination"),
+        f"contenido adicional {item_id}.placement.destination",
+        allow_dot=True,
+    )
+    return {
+        "mode": mode,
+        "destination": destination.as_posix(),
+    }
+
+
+def _validate_optional_source(source: Path, item_id: str) -> None:
+    if source.is_symlink():
+        raise ImporterError(
+            f"contenido adicional {item_id}: la fuente no puede ser symlink"
+        )
+    if source.is_file():
+        return
+    if not source.is_dir():
+        raise ImporterError(
+            f"contenido adicional {item_id}: fuente no regular"
+        )
+    for entry in source.rglob("*"):
+        if entry.is_symlink():
+            raise ImporterError(
+                f"contenido adicional {item_id}: no se admiten symlinks"
+            )
+        if not entry.is_file() and not entry.is_dir():
+            raise ImporterError(
+                f"contenido adicional {item_id}: "
+                "no se admiten archivos especiales"
+            )
+
+
+def _optional_archive_source(
+    source: Path,
+    *,
+    item_id: str,
+    temporary_root: Path,
+) -> tuple[Path, str]:
+    _validate_optional_source(source, item_id)
+    temporary_root.mkdir(parents=True, exist_ok=True)
+    archive = temporary_root / f"{item_id}.tar.gz"
+
+    if source.is_dir() and _ID_RE.fullmatch(source.name):
+        _digest, _size, source_root = _runner_archive_from_directory(
+            source,
+            archive,
+        )
+        return archive, source_root
+
+    wrapper_parent = temporary_root / f"source-{item_id}"
+    wrapper = wrapper_parent / item_id
+    wrapper_parent.mkdir(parents=True, exist_ok=False)
+    if source.is_dir():
+        shutil.copytree(source, wrapper)
+    else:
+        wrapper.mkdir()
+        shutil.copy2(source, wrapper / source.name)
+
+    _digest, _size, source_root = _runner_archive_from_directory(
+        wrapper,
+        archive,
+    )
+    return archive, source_root
+
+
+def _prepare_optional_content(
+    *,
+    workspace: Path,
+    plan: dict[str, Any],
+    temporary_root: Path,
+    reserved_object_ids: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    prepared: list[dict[str, Any]] = []
+    inventory: list[dict[str, Any]] = []
+    seen_content_ids: set[str] = set()
+    seen_object_ids = set(reserved_object_ids)
+
+    for index, raw in enumerate(plan.get("supplemental_content", [])):
+        if not isinstance(raw, dict):
+            raise ImporterError(
+                "supplemental_content contiene una entrada inválida"
+            )
+        item_id = raw.get("id")
+        if not isinstance(item_id, str) or not _ID_RE.fullmatch(item_id):
+            item_id = f"content-{index:04d}"
+        if item_id in seen_content_ids:
+            raise ImporterError(
+                f"contenido adicional duplicado: {item_id}"
+            )
+        seen_content_ids.add(item_id)
+
+        classification = raw.get(
+            "classification",
+            "supplemental-content",
+        )
+        if not isinstance(classification, str) or not classification:
+            raise ImporterError(
+                f"contenido adicional {item_id}: classification inválida"
+            )
+        description = raw.get("description", "")
+        if not isinstance(description, str):
+            raise ImporterError(
+                f"contenido adicional {item_id}: description inválida"
+            )
+        placement = _optional_placement(raw, item_id)
+
+        status: dict[str, Any] = {
+            "id": item_id,
+            "classification": classification,
+            "description": description,
+            "placement": placement,
+            "source_present": False,
+            "status": "pending",
+        }
+        source = _source_for_item(workspace, raw)
+        if source is None:
+            inventory.append(status)
+            continue
+
+        archive, source_root = _optional_archive_source(
+            source,
+            item_id=item_id,
+            temporary_root=temporary_root,
+        )
+        digest_hex = sha256_file(archive)
+        object_id = f"optional-{item_id}"
+        if object_id in seen_object_ids:
+            raise ImporterError(
+                f"object.id opcional duplicado: {object_id}"
+            )
+        seen_object_ids.add(object_id)
+
+        object_declaration = {
+            "id": object_id,
+            "digest": "sha256:" + digest_hex,
+            "roles": ["supplemental_content"],
+            "format": "tar.gz",
+            "required": False,
+            "archive_path": _object_rel(digest_hex),
+            "shared": False,
+            "size": archive.stat().st_size,
+            "description": (
+                description
+                or (
+                    "Contenido opcional inmutable preservado por "
+                    "OfflineGameVault Importer."
+                )
+            ),
+        }
+        optional_declaration = {
+            "id": item_id,
+            "object": object_id,
+            "classification": classification,
+            "description": description,
+            "source": source_root,
+            "placement": placement,
+        }
+        status.update(
+            {
+                "source_present": True,
+                "status": "prepared-immutable-object",
+                "object_id": object_id,
+                "digest": object_declaration["digest"],
+                "archive_path": object_declaration["archive_path"],
+                "format": object_declaration["format"],
+                "bytes": object_declaration["size"],
+                "source": source_root,
+            }
+        )
+        inventory.append(status)
+        prepared.append(
+            {
+                "id": item_id,
+                "object": object_declaration,
+                "optional_content": optional_declaration,
+                "source_path": archive,
+            }
+        )
+
+    return prepared, inventory
+
+
 def _capsule_document(
     *,
     plan: dict[str, Any],
@@ -1536,11 +1762,25 @@ def commit_workspace(
             capsule_stage / "host-contracts/game-source.json",
             _canonical_game_source_contract(legacy_source_contract),
         )
-        supplemental_inventory = _copy_supplemental(
-            capsule_stage,
-            workspace=workspace,
-            plan=plan,
+        reserved_object_ids = {
+            item["id"]
+            for item in capsule.get("objects", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        optional_prepared, supplemental_inventory = (
+            _prepare_optional_content(
+                workspace=workspace,
+                plan=plan,
+                temporary_root=staging / "_optional-objects",
+                reserved_object_ids=reserved_object_ids,
+            )
         )
+        capsule["objects"].extend(
+            item["object"] for item in optional_prepared
+        )
+        capsule["optional_content"] = [
+            item["optional_content"] for item in optional_prepared
+        ]
         write_json(capsule_stage / "capsule.json", capsule)
 
         unresolved = plan["persistent_state"].get("unclassified_candidates", [])
@@ -1631,7 +1871,6 @@ def commit_workspace(
             exports_stage / "portable",
             exports_stage / "removable-media",
             capsule_stage / "public-fixture",
-            capsule_stage / "supplemental-content",
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -1720,6 +1959,22 @@ def commit_workspace(
                     "operation_id": operation_id,
                 }
             )
+        for item in optional_prepared:
+            object_declaration = item["object"]
+            next_index["objects"].append(
+                {
+                    "capsule_object_id": object_declaration["id"],
+                    "label": f"{capsule_id}-{item['id']}",
+                    "operation_id": operation_id,
+                    "path": object_declaration["archive_path"],
+                    "role": "optional-content",
+                    "sha256": object_declaration["digest"].removeprefix(
+                        "sha256:"
+                    ),
+                    "size": object_declaration["size"],
+                }
+            )
+
         state_classification = (
             "clean-baseline-no-default-save"
             if source_status["baseline_state"] == "clean"
@@ -1886,6 +2141,36 @@ def commit_workspace(
                 if not runner_preexisting:
                     new_objects.append(runner_destination)
 
+            optional_ingests: list[dict[str, Any]] = []
+            for item in optional_prepared:
+                object_declaration = item["object"]
+                optional_source = item["source_path"]
+                optional_destination = (
+                    immutable / object_declaration["archive_path"]
+                )
+                optional_preexisting = optional_destination.exists()
+                ingest_optional = run_core_json(
+                    [
+                        "ingest-object",
+                        "--source", str(optional_source),
+                        "--vault-root", str(immutable),
+                        "--format", object_declaration["format"],
+                        "--digest", object_declaration["digest"],
+                        "--expected-size",
+                        str(object_declaration["size"]),
+                    ],
+                    plan=plan,
+                )
+                if not optional_preexisting:
+                    new_objects.append(optional_destination)
+                optional_ingests.append(
+                    {
+                        "id": item["id"],
+                        "object_id": object_declaration["id"],
+                        "ingest": ingest_optional,
+                    }
+                )
+
             inventory_stage = staging / "VAULT_INVENTORY.json"
             run_core_json(
                 [
@@ -1914,6 +2199,9 @@ def commit_workspace(
             staged_receipt = read_json(staged_receipt_path, "receipt staged")
             staged_receipt["objects"]["game_ingest"] = ingest_game
             staged_receipt["objects"]["runner_ingest"] = ingest_runner
+            staged_receipt["objects"]["optional_content_ingest"] = (
+                optional_ingests
+            )
             write_json(staged_receipt_path, staged_receipt)
 
             final_roots = [

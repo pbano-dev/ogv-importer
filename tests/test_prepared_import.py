@@ -277,11 +277,30 @@ class PreparedEndToEndTests(unittest.TestCase):
             result = commit_workspace(workspace, vault=vault)
             self.assertEqual(result["status"], "candidate-imported")
             capsule = vault / "02_CAPSULES/my-prepared-game"
+            capsule_document = __import__("json").loads(
+                (capsule / "capsule.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                [
+                    item["id"]
+                    for item in capsule_document["optional_content"]
+                ],
+                ["digital-artbook"],
+            )
+            optional_objects = [
+                item
+                for item in capsule_document["objects"]
+                if "supplemental_content" in item.get("roles", [])
+            ]
+            self.assertEqual(len(optional_objects), 1)
+            self.assertFalse(
+                (capsule / "supplemental-content").exists()
+            )
             self.assertEqual(
                 (capsule / "docs/00_README.md").read_text(encoding="utf-8"),
                 "# Documento seleccionado\n\nContenido exacto.\n",
             )
-            self.assertTrue(
+            self.assertFalse(
                 (capsule / "supplemental-content/digital-artbook/"
                  "artbook/page.txt").is_file()
             )

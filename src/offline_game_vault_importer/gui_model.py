@@ -253,15 +253,26 @@ class ImportSession:
         source_path: str | None,
         classification: str = "supplemental-content",
         description: str = "",
+        placement_mode: str = "sidecar",
+        destination: str | None = None,
     ) -> None:
         if self.plan is None:
             raise ImporterError("no hay un plan cargado")
+        normalized_id = item_id.strip()
         self.plan.setdefault("supplemental_content", []).append(
             {
-                "id": item_id.strip(),
+                "id": normalized_id,
                 "source_path": source_path or None,
                 "classification": classification,
                 "description": description,
+                "placement": {
+                    "mode": placement_mode,
+                    "destination": (
+                        destination
+                        if destination is not None
+                        else normalized_id
+                    ),
+                },
             }
         )
 

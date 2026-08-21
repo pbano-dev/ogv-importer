@@ -63,7 +63,10 @@ class ManifestIngestContractTests(unittest.TestCase):
             if source_name is not None and format_node is not None:
                 found[source_name] = format_node
 
-        self.assertEqual(set(found), {"game_source", "runner_source"})
+        self.assertEqual(
+            set(found),
+            {"game_source", "runner_source", "optional_source"},
+        )
         self.assertTrue(
             _is_format_reference(
                 found["game_source"],

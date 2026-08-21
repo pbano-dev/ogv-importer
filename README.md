@@ -215,6 +215,20 @@ no durante la importación.
 
 ## Contenido adicional
 
+Desde 0.4.2, el contenido adicional presente se publica como objetos
+inmutables seleccionables por Core, no como copias locales dentro de la
+cápsula. Cada elemento declara una colocación explícita:
+
+- `sidecar`: se materializa aislado bajo `extras/`; es el valor conservador
+  por defecto para planes v4 antiguos sin `placement`.
+- `game-overlay`: sólo se usa cuando el plan lo declara explícitamente,
+  con un destino relativo dentro del árbol lógico del juego.
+
+El importer no infiere que un manual, artbook, soundtrack o cualquier otro
+adjunto deba superponerse sobre los archivos del juego.
+
+
+
 ` supplemental_content ` admite archivos o directorios como:
 
 ```text
