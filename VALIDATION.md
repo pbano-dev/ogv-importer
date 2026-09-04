@@ -1,68 +1,52 @@
-# Validación — OfflineGameVault Importer 0.3.1
+# Validación — OfflineGameVault Importer 0.5.0a1
 
-## Ejecución
+## Suite aislada
 
 ```bash
 bash scripts/test.sh
 ```
 
-Resultado esperado:
+La suite cubre el plan neutral v4, inspección, nomenclatura, workspace
+determinista, privacidad, estado persistente, contenido adicional, dry-run,
+commit, rollback y rechazo de rutas o tipos inseguros. También prueba el flujo
+completo que usa la GUI: preparar, verificar, ensayar e importar.
 
-```text
-Ran 26 tests
-OK
+## Contrato con el Core actual
+
+```bash
+./scripts/check-core-contract.sh \
+  ../offline-game-vault \
+  ../offline-game-vault-gui
 ```
+
+Esta prueba usa el checkout indicado, no un doble simulado. Verifica:
+
+- versión Core 0.19.7 o posterior;
+- presencia de los comandos públicos requeridos;
+- importación real de una cápsula `game-source`;
+- aceptación de la cápsula por `audit-capsule`;
+- lectura del contenido adicional por `list-optional-content`;
+- disponibilidad del objeto opcional en el CAS;
+- composición Direct-Wine real con un runner preservado y el artbook elegido;
+- descubrimiento de la cápsula por el catálogo de la GUI oficial.
 
 ## Cobertura principal
 
-- contrato único `ogv-import-plan-v3`;
-- origen `prepared-offline-game-directory-v1`;
-- nomenclatura portable;
-- inspección de ejecutables y `steam_api*.dll`;
-- creación de workspace neutral;
-- inventario y sello;
-- partidas y save-sets;
-- destino `unbound`;
-- contenido adicional;
-- documentación seleccionada sin reescritura;
-- plantillas documentales de reserva;
-- copia del runner al workspace;
-- `PUBLIC_IMPORT_PLAN.json` sin rutas fuente;
-- verificación;
-- dry-run con y sin estado persistente declarado;
-- commit transaccional;
-- rollback;
-- deduplicación de runner;
-- rechazo de traversal, symlinks inseguros y archivos especiales.
+- contrato único `ogv-import-plan-v4`;
+- origen `prepared-offline-game-directory-v1` independiente de tiendas;
+- único perfil publicable `game-source` con `adapter=other`;
+- runner desacoplado y seleccionable al materializar;
+- contenido adicional como objetos inmutables independientes;
+- `PUBLIC_IMPORT_PLAN.json` sin rutas fuente ni configuración local del Core;
+- rechazo temprano de un Core antiguo o incompleto;
+- publicación transaccional y rollback.
 
-## Prueba end-to-end añadida
+## Validación todavía manual
 
-La suite prepara un juego desacoplado de prueba con:
+- renderizado e interacción GTK4 en Bazzite/Fedora;
+- importación de un juego comercial real ya preparado;
+- materialización y gameplay real con Bottles, Direct-Wine y UMU;
+- partidas, DLC, audio, vídeo, mando, red, cierre y restauración.
 
-```text
-ejecutable
-steam_api64.dll activa
-DLL original conservada
-partida manual
-artbook
-README seleccionado
-```
-
-Después elimina todas las rutas fuente y completa el commit únicamente desde el
-workspace. Finalmente verifica el README exacto, el contenido adicional y la
-ausencia de rutas privadas en la evidencia publicada. Una prueba separada
-confirma que una cápsula sin partidas ni otro estado omite correctamente el
-backup de estado, en lugar de fabricar uno vacío.
-
-## No probado en este entorno
-
-- renderizado interactivo GTK4;
-- integración con un Vault real distinto del fixture;
-- juego comercial real;
-- gameplay;
-- Bottles real;
-- UMU real;
-- Windows nativo.
-
-La GUI se compila e importa sin GTK, pero su interacción debe probarse en el
-entorno Bazzite/Fedora objetivo.
+La importación solo demuestra estructura, integridad y compatibilidad de
+contrato. La aceptación funcional pertenece a cada materialización.

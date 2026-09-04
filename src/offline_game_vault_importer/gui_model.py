@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .core_bridge import probe_core
 from .errors import ImporterError
 from .manual_prepare import prepare_prepared_workspace
 from .planner import (
@@ -370,6 +371,38 @@ class ImportSession:
         if self.workspace is None:
             raise ImporterError("no hay workspace seleccionado")
         return verify_workspace(self.workspace)
+
+    def check_core(self) -> dict[str, object]:
+        return probe_core(self.plan).to_dict()
+
+    def import_prepared_game(
+        self,
+        *,
+        game: Path,
+        prefix: Path | None,
+        workspace: Path,
+    ) -> dict[str, Any]:
+        """Run the complete safe import pipeline selected in the GUI."""
+
+        if self.vault is None:
+            raise ImporterError("falta el Vault de destino")
+        prepared = self.prepare(
+            game=game,
+            prefix=prefix,
+            workspace=workspace,
+        )
+        verified = self.verify()
+        dry_run = self.commit(dry_run=True)
+        committed = self.commit(dry_run=False)
+        return {
+            "schema": 0,
+            "status": committed.get("status", "candidate-imported"),
+            "capsule_id": committed.get("capsule_id"),
+            "prepare": prepared,
+            "verify": verified,
+            "dry_run": dry_run,
+            "commit": committed,
+        }
 
     def commit(self, *, dry_run: bool = False) -> dict[str, Any]:
         if self.workspace is None or self.vault is None:

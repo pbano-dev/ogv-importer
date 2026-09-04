@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -12,11 +13,41 @@ from typing import Any
 from .errors import ImporterError
 
 
+MINIMUM_CORE = (0, 19, 7)
+REQUIRED_COMMANDS = (
+    "audit-capsule",
+    "preserve-state",
+    "verify-state-backup",
+    "ingest-object",
+    "inventory",
+    "list-optional-content",
+    "compose",
+)
+_VERSION_RE = re.compile(r"(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)")
+
+
 @dataclass(frozen=True, slots=True)
 class CoreInvocation:
     command: tuple[str, ...]
     environment: dict[str, str]
     source: str
+
+
+@dataclass(frozen=True, slots=True)
+class CoreProbe:
+    version: str
+    version_tuple: tuple[int, int, int]
+    source: str
+    commands: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "version_tuple": list(self.version_tuple),
+            "source": self.source,
+            "commands": list(self.commands),
+            "minimum_version": ".".join(str(item) for item in MINIMUM_CORE),
+        }
 
 
 def resolve_core(plan: dict[str, Any] | None = None) -> CoreInvocation:
@@ -67,6 +98,82 @@ def resolve_core(plan: dict[str, Any] | None = None) -> CoreInvocation:
     )
 
 
+def _run_probe_command(
+    invocation: CoreInvocation,
+    arguments: list[str],
+    *,
+    label: str,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        completed = subprocess.run(
+            [*invocation.command, *arguments],
+            env=invocation.environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ImporterError(
+            "no se localiza el núcleo oficial OfflineGameVault; "
+            "configure core.source_root, OGV_SOURCE_ROOT o core.command"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ImporterError(f"el núcleo agotó el tiempo al comprobar {label}") from exc
+    except OSError as exc:
+        raise ImporterError(f"no se pudo consultar el núcleo: {exc}") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise ImporterError(
+            f"el núcleo no admite {label}: {detail or 'sin diagnóstico'}"
+        )
+    return completed
+
+
+def probe_core(plan: dict[str, Any] | None = None) -> CoreProbe:
+    """Verify the exact public Core contract required by an import.
+
+    The importer is deliberately a client of the official CLI.  Refusing an
+    old or incomplete checkout before staging any Vault mutation keeps that
+    boundary explicit and prevents a partially compatible command set from
+    producing a capsule that the current GUI cannot consume.
+    """
+
+    invocation = resolve_core(plan)
+    version_result = _run_probe_command(
+        invocation,
+        ["--version"],
+        label="--version",
+    )
+    version = version_result.stdout.strip()
+    match = _VERSION_RE.search(version)
+    if match is None:
+        raise ImporterError(
+            "el núcleo devolvió una versión no reconocible: " + version[:200]
+        )
+    version_tuple = tuple(int(item) for item in match.groups())
+    if version_tuple < MINIMUM_CORE:
+        minimum = ".".join(str(item) for item in MINIMUM_CORE)
+        raise ImporterError(
+            f"OfflineGameVault Core {version} es demasiado antiguo; "
+            f"se requiere {minimum} o posterior"
+        )
+
+    for command in REQUIRED_COMMANDS:
+        _run_probe_command(
+            invocation,
+            [command, "--help"],
+            label=command,
+        )
+    return CoreProbe(
+        version=version,
+        version_tuple=version_tuple,
+        source=invocation.source,
+        commands=REQUIRED_COMMANDS,
+    )
+
+
 def run_core_json(
     arguments: list[str],
     *,
@@ -110,21 +217,4 @@ def run_core_json(
 
 
 def core_version(plan: dict[str, Any] | None = None) -> str:
-    invocation = resolve_core(plan)
-    try:
-        completed = subprocess.run(
-            [*invocation.command, "--version"],
-            env=invocation.environment,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    except (FileNotFoundError, OSError) as exc:
-        raise ImporterError(f"no se pudo consultar el núcleo: {exc}") from exc
-    if completed.returncode != 0:
-        raise ImporterError(
-            "el núcleo no respondió a --version: "
-            + (completed.stderr or completed.stdout).strip()
-        )
-    return completed.stdout.strip()
+    return probe_core(plan).version

@@ -7,7 +7,7 @@ from typing import Any
 
 from .errors import ImporterError
 from .sanitization import validate_sanitization_rules
-from .naming import canonical_profile_id, suggest_identifiers
+from .naming import suggest_identifiers
 
 _CAPSULE_ID_RE = re.compile(r"^[a-z0-9]+(?:[._-][a-z0-9]+)*$")
 _STATE_ID_RE = _CAPSULE_ID_RE
@@ -128,7 +128,7 @@ def build_plan(scan: dict[str, Any]) -> dict[str, Any]:
         digest = runner.get("computed_sha256") or runner.get("declared_sha256")
         runner_selection.update(
             {
-                "binding": "preferred",
+                "binding": "select-at-materialization",
                 "source_path": relative,
                 "sha256": digest,
                 "reuse_existing_vault_object": bool(runner.get("known_in_vault")),
@@ -189,26 +189,12 @@ def build_plan(scan: dict[str, Any]) -> dict[str, Any]:
         },
         "profiles": [
             {
-                "id": "linux-bottles-flatpak",
-                "adapter": "bottles",
+                "id": "game-source",
+                "adapter": "other",
                 "platform": "linux",
                 "status": "candidate",
                 "enabled": True,
-            },
-            {
-                "id": "linux-direct-wine",
-                "adapter": "wine",
-                "platform": "linux",
-                "status": "candidate",
-                "enabled": True,
-            },
-            {
-                "id": "windows-native",
-                "adapter": "windows",
-                "platform": "windows",
-                "status": "not_tested",
-                "enabled": True,
-            },
+            }
         ],
         "policy": {
             "write_vault": False,
@@ -245,39 +231,6 @@ def build_plan(scan: dict[str, Any]) -> dict[str, Any]:
 
 
 
-def _default_profiles() -> list[dict[str, Any]]:
-    return [
-        {
-            "id": canonical_profile_id("bottles"),
-            "adapter": "bottles",
-            "platform": "linux",
-            "status": "candidate",
-            "enabled": True,
-        },
-        {
-            "id": canonical_profile_id("wine"),
-            "adapter": "wine",
-            "platform": "linux",
-            "status": "candidate",
-            "enabled": False,
-        },
-        {
-            "id": canonical_profile_id("umu"),
-            "adapter": "umu",
-            "platform": "linux",
-            "status": "candidate",
-            "enabled": False,
-        },
-        {
-            "id": canonical_profile_id("windows"),
-            "adapter": "windows",
-            "platform": "windows",
-            "status": "not_tested",
-            "enabled": False,
-        },
-    ]
-
-
 def new_prepared_plan(
     *,
     title: str | None = None,
@@ -298,21 +251,22 @@ def new_prepared_plan(
         "source": {
             "type": "prepared-offline-game-directory-v1",
             "game_directory": game_directory,
+            "store_client_independent": True,
             "steam_independent": True,
             "legitimate_source": True,
             "third_party_drm": "declared-absent",
             "preparation": {
-                "steamworks": "gbe_fork-or-goldberg-or-not-required",
-                "steamstub": "steamless-or-not-required",
                 "performed_before_import": True,
+                "responsibility": "user",
+                "store_integration": "removed-or-not-required",
             },
         },
         "identity": {
             "title": display_title,
             "edition": "Standard",
-            "source_store": "Steam",
+            "source_store": "Prepared offline copy",
             "appid": None,
-            "preserved_version": "[RELLENAR]",
+            "preserved_version": "unknown",
             "capsule_id": capsule_id,
         },
         "layout": {
@@ -349,7 +303,7 @@ def new_prepared_plan(
         "profiles": [
             {
                 "id": "game-source",
-                "adapter": "bottles",
+                "adapter": "other",
                 "platform": "linux",
                 "status": "candidate",
                 "enabled": True,
@@ -379,13 +333,19 @@ def new_prepared_plan(
         ],
         "naming_examples": suggestions,
         "notes": [
-            "El único origen admitido es un directorio jugable ya desacoplado de Steam.",
+            (
+                "El único origen admitido es un directorio jugable preparado "
+                "y aislado de cualquier cliente de tienda."
+            ),
             (
                 "source.game_directory apunta a la carpeta que contiene los "
                 "binarios del juego; drive_c es topología de materialización, "
                 "no el objeto de juego que se importa por defecto."
             ),
-            "El importador no aplica Steamless ni sustituye DLLs de Steamworks.",
+            (
+                "El importador no elimina integraciones de tienda, modifica "
+                "DRM ni sustituye binarios."
+            ),
             "La selección explícita del usuario es la autoridad.",
             "La importación estructural no concede aceptación funcional.",
         ],
@@ -393,12 +353,12 @@ def new_prepared_plan(
 
 
 def new_manual_plan() -> dict[str, Any]:
-    """Compatibility alias for 0.2.x callers; returns the v3 prepared-game plan."""
+    """Compatibility alias for 0.2.x callers; returns the v4 prepared-game plan."""
     return new_prepared_plan()
 
 
 def require_prepared_plan_contract(plan: dict[str, Any]) -> None:
-    """Reject every public import contract except the prepared-game v3 model."""
+    """Reject every public import contract except the prepared-game v4 model."""
     if not isinstance(plan, dict) or plan.get("contract") != "ogv-import-plan-v4":
         raise ImporterError(
             "solo se admite contract=ogv-import-plan-v4; "
@@ -436,7 +396,13 @@ def _safe_relative(value: Any, label: str) -> str:
 
 
 def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Return an in-memory v3 plan while preserving earlier explicit selections."""
+    """Return an in-memory v4 plan while preserving earlier explicit selections."""
+    original_source = plan.get("source")
+    needs_neutral_migration = (
+        plan.get("contract") != "ogv-import-plan-v4"
+        or not isinstance(original_source, dict)
+        or "store_client_independent" not in original_source
+    )
     if plan.get("contract") == "ogv-import-plan-v4":
         result = deepcopy(plan)
     elif plan.get("contract") == "ogv-import-plan-v3":
@@ -517,6 +483,7 @@ def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
         source["legacy_source_type"] = source.get("type")
         source["type"] = "prepared-offline-game-directory-v1"
     source.setdefault("steam_independent", True)
+    source.setdefault("store_client_independent", True)
     source.setdefault("legitimate_source", True)
     source.setdefault("third_party_drm", "declared-absent")
     source.setdefault(
@@ -527,6 +494,21 @@ def upgrade_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "performed_before_import": True,
         },
     )
+    if needs_neutral_migration:
+        runner = result.get("runner")
+        if isinstance(runner, dict):
+            runner["binding"] = "select-at-materialization"
+        profiles = result.get("profiles")
+        if (
+            isinstance(profiles, list)
+            and len(profiles) == 1
+            and isinstance(profiles[0], dict)
+            and profiles[0].get("id") == "game-source"
+        ):
+            profiles[0]["adapter"] = "other"
+            profiles[0]["platform"] = "linux"
+            profiles[0]["status"] = "candidate"
+            profiles[0]["enabled"] = True
     return result
 
 
@@ -648,7 +630,11 @@ def _validate_source(plan: dict[str, Any], *, for_commit: bool) -> None:
         raise ImporterError(
             "solo se admite source.type=prepared-offline-game-directory-v1"
         )
-    for key in ("steam_independent", "legitimate_source"):
+    for key in (
+        "store_client_independent",
+        "steam_independent",
+        "legitimate_source",
+    ):
         if source.get(key) is not True:
             raise ImporterError(f"source.{key} debe confirmarse")
     if source.get("third_party_drm") != "declared-absent":
@@ -700,6 +686,22 @@ def _validate_profiles(plan: dict[str, Any]) -> None:
             raise ImporterError(f"estado de perfil no admitido: {status}")
     if enabled == 0:
         raise ImporterError("el plan debe habilitar al menos un perfil")
+    if len(profiles) != 1:
+        raise ImporterError(
+            "el flujo preparado solo publica el perfil neutral game-source"
+        )
+    source_profile = profiles[0]
+    if (
+        source_profile.get("id") != "game-source"
+        or source_profile.get("adapter") != "other"
+        or source_profile.get("platform") != "linux"
+        or source_profile.get("status") != "candidate"
+        or source_profile.get("enabled") is not True
+    ):
+        raise ImporterError(
+            "profiles debe contener únicamente game-source habilitado "
+            "con adapter=other, platform=linux y status=candidate"
+        )
 
 
 def _validate_attachments(plan: dict[str, Any]) -> None:
@@ -796,7 +798,7 @@ def validate_plan(
     *,
     phase: str = "prepare",
 ) -> dict[str, Any]:
-    """Validate and return a normalized v3 plan.
+    """Validate and return a normalized v4 plan.
 
     ``prepare`` accepts unresolved state classification and an unbound runner.
     ``commit`` additionally requires the identity and entrypoint needed to
@@ -821,13 +823,11 @@ def validate_plan(
     if not isinstance(runner, dict):
         raise ImporterError("runner inválido")
     binding = runner.get("binding", "select-at-materialization")
-    if binding not in {
-        "select-at-materialization",
-        "preferred",
-        "fixed",
-        "none",
-    }:
-        raise ImporterError("runner.binding no admitido")
+    if binding != "select-at-materialization":
+        raise ImporterError(
+            "runner.binding debe ser select-at-materialization; el importer "
+            "puede preservar un runner, pero no vincularlo al juego"
+        )
 
     if phase == "commit":
         markers = [

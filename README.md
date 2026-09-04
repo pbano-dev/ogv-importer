@@ -1,21 +1,22 @@
 # OfflineGameVault Importer
 
 Herramienta gráfica y CLI para incorporar a OfflineGameVault un **directorio de
-juego de Windows ya preparado y desacoplado de Steam**.
+juego de Windows ya preparado y aislado de cualquier cliente de tienda**.
 
 ## Alcance
 
 El importer empieza cuando ya existe una copia jugable que el usuario ha
-preparado previamente. Para juegos procedentes de Steam y sin DRM de terceros,
-esa copia puede contener Goldberg/gbe_fork y, cuando SteamStub lo requiera, un
-ejecutable desempaquetado con Steamless.
+preparado previamente. El modo de preparar esa copia queda fuera del importer:
+la carpeta seleccionada debe ser ya autónoma respecto de Steam, Epic, GOG y
+cualquier otro cliente de tienda.
 
 El importer:
 
 - copia el directorio jugable sin reinterpretarlo;
 - genera inventario y SHA-256;
 - separa estado persistente, contenido adicional y documentación;
-- puede preservar un runner/runtime y un prefix inicial;
+- puede preservar un runner/runtime reutilizable y un prefix inicial como
+  contexto avanzado, sin vincularlos al juego;
 - construye un workspace autocontenido;
 - valida y publica transaccionalmente un candidato en el Vault.
 
@@ -32,7 +33,7 @@ El importer **no**:
 
 ## Contrato único
 
-La versión 0.3.1 utiliza un único modelo:
+La versión 0.5.0a1 utiliza un único modelo:
 
 ```text
 ogv-import-plan-v4
@@ -46,7 +47,8 @@ regresión y no constituye otro modo público de importación.
 El plan confirma:
 
 ```text
-steam_independent = true
+store_client_independent = true
+steam_independent = true  # compatibilidad del plan v4
 legitimate_source = true
 third_party_drm = declared-absent
 preparation.performed_before_import = true
@@ -63,7 +65,7 @@ ogv-import-gui
 
 1. Seleccionar el Vault.
 2. Seleccionar un workspace nuevo.
-3. Seleccionar el directorio del juego desacoplado.
+3. Seleccionar el directorio del juego ya aislado de tiendas.
 4. Pulsar **Inspeccionar y proponer**.
 5. Revisar título, `capsule_id`, ejecutable y destino.
 6. Añadir opcionalmente:
@@ -72,11 +74,12 @@ ogv-import-gui
    - partidas e identidad;
    - contenido adicional;
    - documentación.
-7. Elegir perfiles candidatos.
-8. Preparar el workspace.
-9. Verificar.
-10. Ejecutar un dry-run.
-11. Importar al Vault.
+7. Comprobar el contrato con Core 0.19.7 o posterior.
+8. Pulsar **Preparar, verificar e importar automáticamente**.
+
+El flujo avanzado conserva botones separados para preparar el workspace,
+verificar, ejecutar un dry-run e importar. Ambos caminos publican únicamente
+el perfil neutral `game-source`.
 
 La inspección propone ejecutables e identificadores. La selección del usuario
 sigue siendo la autoridad.
@@ -135,7 +138,7 @@ ogv-import new-plan \
   --output IMPORT_PLAN.json
 ```
 
-Revise como mínimo:
+Revise como mínimo cuando la inspección no pueda decidirlo con seguridad:
 
 ```text
 identity.preserved_version
@@ -208,10 +211,10 @@ La entrada principal es la **carpeta del juego que contiene sus binarios**,
 no la raíz `drive_c` de una Bottle o Wine prefix. `drive_c` describe la
 topología donde el Core volverá a colocar el juego al materializar.
 
-Un prefix de origen puede servir más adelante como contexto para detectar
-material estructural externo al directorio del juego, pero no se preserva
-completo por defecto. Backend y runner se eligen durante la materialización,
-no durante la importación.
+Un prefix de origen puede servir como contexto avanzado para detectar material
+estructural externo al directorio del juego, pero no se preserva completo por
+defecto. Backend y runner se eligen durante la materialización, no durante la
+importación.
 
 ## Contenido adicional
 
@@ -300,20 +303,21 @@ una plantilla marcada con `[RELLENAR]`, `[VERIFICAR]` o `[NO PROBADO]`.
 `PUBLIC_IMPORT_PLAN.json` elimina rutas fuente, checkout del core y comandos
 locales. La cápsula publica únicamente la copia saneada.
 
-## Perfiles
+## Perfil neutral
 
-Perfiles disponibles:
+El importer publica exactamente un perfil `game-source` con adapter `other`.
+No publica perfiles Bottles, Direct-Wine, UMU/Proton ni Windows. El Core deriva
+la composición solicitada más tarde, usando exclusivamente runners y
+componentes preservados compatibles. La importación nunca publica estado
+`verified`; la aceptación funcional continúa siendo posterior y específica de
+cada composición.
 
-```text
-Bottles
-Direct-Wine
-UMU/Proton
-Windows nativo
+Antes del commit se comprueba Core 0.19.7 o posterior y la presencia de los
+comandos públicos requeridos. Puede ejecutarse la misma comprobación desde CLI:
+
+```bash
+ogv-import check-core --source-root ../offline-game-vault
 ```
-
-Bottles se habilita por defecto. Los demás se habilitan manualmente cuando
-aplican. El importer solo publica estados `candidate`, `experimental`,
-`not_tested` o `unavailable`; rechaza `verified`.
 
 ## Integridad y privacidad
 
@@ -355,8 +359,16 @@ Windows nativo
 bash scripts/test.sh
 ```
 
-La suite 0.3.1 cubre el flujo preparado, nomenclatura, inspección, partidas
+La suite 0.5.0a1 cubre el flujo preparado, nomenclatura, inspección, partidas
 multielemento, ausencia válida de estado persistente, documentación seleccionada,
 contenido adicional, privacidad, dry-run, commit y rollback, además de pruebas
 de seguridad de archivo heredadas
 que siguen protegiendo las primitivas internas.
+
+La compatibilidad real con un checkout del Core se valida con:
+
+```bash
+./scripts/check-core-contract.sh \
+  ../offline-game-vault \
+  ../offline-game-vault-gui
+```

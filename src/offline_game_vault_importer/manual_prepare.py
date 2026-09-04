@@ -301,6 +301,7 @@ def _prepare_prepared_in_place(
         },
         "source": {
             "format": "prepared-offline-game-directory",
+            "store_client_independent_declared": True,
             "steam_independent_declared": True,
             "bottles_metadata_embedded": False,
         },
@@ -359,7 +360,7 @@ def _prepare_prepared_in_place(
         workspace / "draft/CAPSULE_INPUT.json",
         {
             "schema": 0,
-            "contract": "ogv-capsule-input-draft-v3",
+            "contract": "ogv-capsule-input-draft-v4",
             "status": "candidate",
             "identity": plan["identity"],
             "neutral_object": receipt["neutral_object"],

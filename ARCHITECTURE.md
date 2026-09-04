@@ -1,68 +1,75 @@
-# Arquitectura — OfflineGameVault Importer 0.3.1
+# Arquitectura — OfflineGameVault Importer 0.5.0a1
 
 ## Responsabilidad
 
-El importer es la frontera entre una copia jugable ya desacoplada y el Vault.
+El importer es la frontera entre una copia de juego ya preparada, legítima y
+aislada de clientes de tienda y el Vault. No elimina integraciones de tienda,
+modifica DRM, sustituye binarios ni descarga componentes.
 
 ```text
 directorio jugable preparado
         │
         ▼
-inspección orientativa
+inspección orientativa y confirmación
         │
         ▼
-ogv-import-plan-v3
+ogv-import-plan-v4
         │
         ▼
 workspace neutral autocontenido
         │
-        ├── juego/prefix
-        ├── estado privado
-        ├── runner
-        ├── contenido adicional
+        ├── objeto de juego
+        ├── estado privado opcional
+        ├── contenido adicional opcional
         └── documentación
         │
         ▼
-verify + dry-run
+verify + dry-run + commit
         │
         ▼
-commit transaccional
+OfflineGameVault Core 0.19.7+
         │
         ▼
-OfflineGameVault
+cápsula game-source neutral
 ```
 
-No existe un segundo modo de importación para instalaciones dependientes de
-Steam ni para paquetes históricos.
+La GUI expone el flujo completo mediante **Preparar, verificar e importar
+automáticamente** y conserva las operaciones separadas para diagnóstico.
 
-## Autoridad
+## Límite de autoridad
 
-1. selección efectiva del usuario;
-2. árbol copiado al workspace;
-3. inventarios y hashes;
-4. detección automática;
-5. documentación descriptiva.
+El usuario es autoridad sobre la carpeta elegida, la identidad, el ejecutable
+cuando la inspección es ambigua y los adjuntos seleccionados. La detección
+automática solo propone valores.
 
-La inspección nunca reemplaza una selección confirmada.
+El Core oficial es autoridad sobre:
+
+- auditoría de la cápsula;
+- ingestión y verificación del CAS;
+- inventario;
+- estado persistente verificable;
+- listado de contenido opcional;
+- composición posterior.
+
+Antes de publicar, el importer exige Core 0.19.7 o posterior y comprueba los
+comandos públicos que necesita. Una incompatibilidad detiene la operación antes
+de modificar el Vault.
 
 ## Contrato de entrada
 
 ```text
-contract: ogv-import-plan-v3
+contract: ogv-import-plan-v4
 source.type: prepared-offline-game-directory-v1
+source.store_client_independent: true
+source.legitimate_source: true
+source.third_party_drm: declared-absent
+source.preparation.performed_before_import: true
 ```
 
-Se presupone que el desacople se realizó antes:
+`steam_independent` permanece en v4 como campo de compatibilidad. El alcance es
+neutral respecto de Steam, Epic, GOG y cualquier otra tienda.
 
-```text
-Steamworks → Goldberg/gbe_fork o no requerido
-SteamStub  → Steamless o no requerido
-DRM de terceros → declarado ausente
-```
-
-El importer registra esta frontera y no ejecuta ninguna de esas operaciones.
-
-## Neutralización
+## Fuente neutral
 
 El objeto inmutable contiene:
 
@@ -74,25 +81,41 @@ INVENTORY.json
 INVENTORY_SEAL.json
 ```
 
-Estado, documentación, extras y runner se copian por separado durante
-`prepare`. El commit trabaja desde el workspace y no desde las rutas fuente.
+La carpeta del juego, no `drive_c`, es la fuente principal. El prefix opcional
+solo aporta contexto estructural avanzado. Un runner opcional se puede preservar
+como objeto global reutilizable, pero nunca se añade como dependencia de la
+fuente del juego.
 
-## Nomenclatura
-
-`naming.py` genera sugerencias conservadoras, ASCII y editables. Los ID de
-perfil canónicos son:
+La cápsula resultante publica exactamente:
 
 ```text
-linux-bottles-flatpak
-linux-direct-wine
-linux-umu-proton
-windows-native
+profile.id: game-source
+profile.adapter: other
+host contract: ogv-game-source-v1
+runner binding: select-at-materialization
 ```
 
-La sugerencia de ejecutable solo se aplica automáticamente cuando hay un único
-candidato. Con varios ejecutables, el usuario decide.
+Bottles, Direct-Wine y UMU/Proton se eligen después en la GUI oficial. El Core
+selecciona únicamente combinaciones técnicamente compatibles entre la fuente y
+los componentes preservados.
 
-## Privacidad
+## Contenido adicional
+
+Bandas sonoras, artbooks, manuales, fondos, vídeos y otros extras se archivan
+como objetos CAS independientes. Cada elemento tiene un ID, clasificación y una
+colocación explícita:
+
+- `sidecar`: publicación aislada bajo `extras/`;
+- `game-overlay`: superposición declarada dentro del árbol lógico del juego.
+
+La GUI oficial obtiene estos elementos mediante `list-optional-content` y pasa
+solo los IDs seleccionados a `compose --content-id`.
+
+## Estado y privacidad
+
+El estado privado se mantiene fuera del objeto inmutable. Los save sets pueden
+agrupar varios elementos y solo son restaurables cuando tienen destinos
+relativos explícitos.
 
 El workspace conserva dos planes:
 
@@ -101,38 +124,12 @@ IMPORT_PLAN.json         privado y operativo
 PUBLIC_IMPORT_PLAN.json  publicable y sin rutas del anfitrión
 ```
 
-El commit publica únicamente el segundo. También elimina del plan público el
-comando y checkout local del core.
+El commit publica únicamente el plan saneado. Las rutas fuente, el checkout y
+el comando local del Core no entran en la cápsula.
 
-## Documentación
+## Aceptación
 
-Los documentos seleccionados se copian al workspace y después a `docs/`.
-Los cuatro roles raíz reciben plantilla solamente cuando no se aportó un
-documento explícito:
-
-```text
-readme
-game_sheet
-credits
-preserved_by
-```
-
-## Perfiles
-
-La cápsula puede declarar Bottles, Direct-Wine, UMU y Windows. Cada perfil
-mantiene su ID editable y su estado independiente. El importer prohíbe publicar
-`verified`.
-
-## Límites
-
-La importación no prueba:
-
-- arranque;
-- ausencia material de DRM adicional;
-- contenido DLC;
-- partidas;
-- aislamiento;
-- restauración;
-- compatibilidad futura.
-
-Esos resultados pertenecen a aceptación funcional posterior.
+La importación acredita estructura, integridad y compatibilidad de contrato. No
+acredita arranque, partidas, DLC, audio, vídeo, mando, aislamiento de red,
+cierre normal ni restauración. Esa evidencia pertenece a cada materialización
+posterior.

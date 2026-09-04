@@ -2,19 +2,24 @@
 
 ## Prioridad inmediata
 
-1. Probar la GUI 0.3.1 en Bazzite/Fedora con GTK4.
-2. Importar un juego pequeño ya desacoplado a un Vault de laboratorio.
-3. Materializar el perfil Bottles.
-4. Cargar una partida seleccionada.
-5. Verificar aislamiento de red y restauración limpia.
-6. Revisar el contrato UMU con el núcleo actual.
+1. Probar la GUI 0.5.0a1 en Bazzite/Fedora con GTK4.
+2. Importar un juego comercial pequeño ya aislado de su tienda.
+3. Confirmar que aparece en Offline Game Vault GUI.
+4. Materializarlo desde `game-source` con Bottles, Direct-Wine y UMU usando
+   runners preservados compatibles.
+5. Repetir las composiciones con BSO o artbook seleccionable.
+6. Validar partida, aislamiento de red, cierre y restauración limpia.
 
-## Pendiente de diseño
+## Evolución arquitectónica
 
-- editor gráfico para reordenar y retirar elementos ya añadidos;
-- selector de rol documental mediante `DropDown`;
-- visor de inventario antes de preparar;
-- detección explícita de cambios en el árbol fuente durante una copia larga;
-- recibo gráfico de aceptación funcional posterior.
+- mover la actualización completa del control plane del Vault desde
+  `vault_commit.py` a una operación pública transaccional del Core;
+- migrar la presentación del importer al mismo toolkit Qt/PySide6 que la GUI
+  oficial sin mezclar lógica de dominio con widgets;
+- permitir reordenar y retirar adjuntos ya seleccionados;
+- mostrar un inventario previo a la preparación;
+- detectar cambios en el árbol fuente durante copias largas;
+- añadir un recibo gráfico de aceptación funcional posterior.
 
-Ninguno de estos pendientes cambia el modelo único de entrada.
+Ninguno de estos puntos debe introducir selección de backend o runner durante
+la importación. Esa decisión sigue perteneciendo a la materialización.

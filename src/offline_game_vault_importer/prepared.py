@@ -36,8 +36,9 @@ def inspect_prepared_game(
 ) -> dict[str, Any]:
     """Inspect a user-selected, already decoupled game directory.
 
-    Detection is advisory. The importer never applies Steamless, replaces DLLs,
-    downloads Steam components, or claims functional acceptance.
+    Detection is advisory. The importer never removes store integration,
+    modifies DRM, replaces binaries, downloads components, or claims
+    functional acceptance.
     """
     root = _regular_directory(game)
     executables: list[dict[str, Any]] = []

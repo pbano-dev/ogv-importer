@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 
+from .core_bridge import probe_core
 from .errors import ImporterError
 from .manual_prepare import prepare_prepared_workspace
 from .planner import (
@@ -27,8 +28,9 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ogv-import",
         description=(
-            "Importa al Vault un directorio de juego ya desacoplado de Steam. "
-            "No aplica Steamless, no sustituye DLLs y no descarga componentes."
+            "Importa al Vault un directorio de juego ya preparado y aislado "
+            "de cualquier tienda. No modifica DRM, no sustituye binarios y "
+            "no descarga componentes."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -44,7 +46,7 @@ def _parser() -> argparse.ArgumentParser:
 
     plan = sub.add_parser(
         "new-plan",
-        help="Genera un IMPORT_PLAN v3 con nomenclatura sugerida.",
+        help="Genera un IMPORT_PLAN v4 neutral con nomenclatura sugerida.",
     )
     plan.add_argument("--game", required=True, type=Path)
     plan.add_argument("--title")
@@ -88,6 +90,13 @@ def _parser() -> argparse.ArgumentParser:
     commit.add_argument("--workspace", required=True, type=Path)
     commit.add_argument("--vault", required=True, type=Path)
     commit.add_argument("--dry-run", action="store_true")
+
+    core = sub.add_parser(
+        "check-core",
+        help="Comprueba la versión y el contrato público del núcleo.",
+    )
+    core.add_argument("--source-root", type=Path)
+    core.add_argument("--core-command")
 
     sub.add_parser("gui", help="Abre el asistente gráfico.")
     return parser
@@ -164,6 +173,22 @@ def main(argv: list[str] | None = None) -> int:
                     vault=args.vault,
                     dry_run=args.dry_run,
                 )
+            )
+        elif args.command == "check-core":
+            source_root = (
+                str(args.source_root.expanduser())
+                if args.source_root is not None
+                else None
+            )
+            _print(
+                probe_core(
+                    {
+                        "core": {
+                            "source_root": source_root,
+                            "command": args.core_command,
+                        }
+                    }
+                ).to_dict()
             )
         elif args.command == "gui":
             from .gui import main as gui_main

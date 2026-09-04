@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "offline-game-vault-importer"
-version = "0.4.2"
-description = "GUI and CLI importer for already decoupled Windows games, saves, documentation and supplemental content into OfflineGameVault"
+version = "0.5.0a1"
+description = "GUI and CLI importer for store-independent Windows games and optional content into OfflineGameVault"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
