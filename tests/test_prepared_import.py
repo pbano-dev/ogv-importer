@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from offline_game_vault_importer.errors import ImporterError
 from offline_game_vault_importer.gui_model import ImportSession
@@ -21,6 +22,7 @@ from offline_game_vault_importer.prepared import inspect_prepared_game
 from offline_game_vault_importer.util import sha256_file
 from offline_game_vault_importer.vault_commit import commit_workspace
 from offline_game_vault_importer.verify import verify_workspace
+from offline_game_vault_importer.workspace_sanitize import sanitize_workspace
 
 from test_commit import FAKE_CORE, make_vault
 
@@ -111,6 +113,81 @@ class PreparedDirectoryTests(unittest.TestCase):
 
 
 class PreparedEndToEndTests(unittest.TestCase):
+    def test_prepared_game_directory_name_is_not_a_privacy_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = root / "Game"
+            game.mkdir()
+            (game / "eldenring.exe").write_bytes(b"MZ-prepared")
+            (game / "settings.ini").write_text(
+                "Game=Elden Ring\nCategory=Game\n",
+                encoding="utf-8",
+            )
+            plan = new_prepared_plan(
+                title="Elden Ring",
+                game_directory=str(game),
+            )
+            plan["layout"].update(
+                {
+                    "entrypoint": "eldenring.exe",
+                    "game_destination_in_prefix": "drive_c/Games/elden-ring/Game",
+                    "working_directory": "drive_c/Games/elden-ring/Game",
+                }
+            )
+            workspace = root / "workspace"
+            prepare_prepared_workspace(
+                plan,
+                game=game,
+                prefix=None,
+                workspace=workspace,
+            )
+
+            privacy = json.loads(
+                (workspace / "reports/privacy-report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(privacy["blocking_text_hits"], 0)
+            with patch(
+                "offline_game_vault_importer.workspace_sanitize."
+                "_build_deterministic_tar_gz"
+            ) as rebuild:
+                refreshed = sanitize_workspace(workspace, plan)
+            rebuild.assert_not_called()
+            self.assertEqual(refreshed["status"], "verified-privacy-clean")
+            self.assertFalse(refreshed["neutral_object_rebuilt"])
+
+    def test_prepared_game_still_blocks_real_host_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            game = root / "Game"
+            game.mkdir()
+            (game / "eldenring.exe").write_bytes(b"MZ-prepared")
+            (game / "settings.ini").write_text(
+                "cache=/home/Pablo/.cache/game\n",
+                encoding="utf-8",
+            )
+            plan = new_prepared_plan(
+                title="Elden Ring",
+                game_directory=str(game),
+            )
+            plan["layout"]["entrypoint"] = "eldenring.exe"
+            workspace = root / "workspace"
+            prepare_prepared_workspace(
+                plan,
+                game=game,
+                prefix=None,
+                workspace=workspace,
+            )
+
+            privacy = json.loads(
+                (workspace / "reports/privacy-report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(privacy["blocking_text_hits"], 1)
+            self.assertEqual(privacy["text_hits"][0]["pattern"], "/home/")
+
     def test_prepared_game_without_state_skips_state_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

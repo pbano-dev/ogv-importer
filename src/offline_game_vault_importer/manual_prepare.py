@@ -322,7 +322,10 @@ def _prepare_prepared_in_place(
     privacy = _privacy_report(
         neutral,
         source_root=game.parent,
-        package_name=game.name,
+        # A prepared directory name is game data, not host identity. Common
+        # roots such as "Game" otherwise match ordinary product text and make
+        # large, valid imports impossible to commit.
+        package_name="",
     )
     write_json(reports / "privacy-report.json", privacy)
 

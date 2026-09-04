@@ -1,4 +1,4 @@
-# Validación — OfflineGameVault Importer 0.5.0a1
+# Validación — OfflineGameVault Importer 0.5.0a2
 
 ## Suite aislada
 

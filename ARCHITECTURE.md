@@ -1,4 +1,4 @@
-# Arquitectura — OfflineGameVault Importer 0.5.0a1
+# Arquitectura — OfflineGameVault Importer 0.5.0a2
 
 ## Responsabilidad
 

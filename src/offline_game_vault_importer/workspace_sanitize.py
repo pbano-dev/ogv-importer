@@ -67,26 +67,36 @@ def sanitize_workspace(
     sanitization = apply_sanitization_rules(neutral, plan)
     write_json(root / "reports/privacy-sanitization.json", sanitization)
 
-    inventory_path = neutral / "INVENTORY.json"
-    seal_path = neutral / "INVENTORY_SEAL.json"
-    inventory_path.unlink(missing_ok=True)
-    seal_path.unlink(missing_ok=True)
-
-    inventory = _inventory(neutral)
-    write_json(inventory_path, inventory)
-    write_json(
-        seal_path,
-        {
-            "schema": 0,
-            "inventory_scope": "neutral-object before INVENTORY.json",
-            "inventory_sha256": sha256_file(inventory_path),
-        },
+    neutral_changed = bool(
+        sanitization.get("automatic", {}).get("files_changed", 0)
+    ) or any(
+        item.get("sha256_before") != item.get("sha256_after")
+        for item in sanitization.get("declared_results", [])
+        if isinstance(item, dict)
     )
+    if neutral_changed:
+        inventory_path = neutral / "INVENTORY.json"
+        seal_path = neutral / "INVENTORY_SEAL.json"
+        inventory_path.unlink(missing_ok=True)
+        seal_path.unlink(missing_ok=True)
+
+        inventory = _inventory(neutral)
+        write_json(inventory_path, inventory)
+        write_json(
+            seal_path,
+            {
+                "schema": 0,
+                "inventory_scope": "neutral-object before INVENTORY.json",
+                "inventory_sha256": sha256_file(inventory_path),
+            },
+        )
 
     privacy = _privacy_report(
         neutral,
         source_root=None,
-        package_name=(plan.get("identity", {}).get("title") or "game"),
+        # Titles and prepared directory basenames are public game metadata,
+        # not private host identifiers.
+        package_name="",
     )
     write_json(root / "reports/privacy-report.json", privacy)
 
@@ -94,9 +104,13 @@ def sanitize_workspace(
     object_path = root / receipt["neutral_object"].get(
         "path", "objects/neutral-game.tar.gz"
     )
-    _build_deterministic_tar_gz(neutral, object_path)
-    object_digest = sha256_file(object_path)
-    object_bytes = object_path.stat().st_size
+    if neutral_changed:
+        _build_deterministic_tar_gz(neutral, object_path)
+        object_digest = sha256_file(object_path)
+        object_bytes = object_path.stat().st_size
+    else:
+        object_digest = previous_verification["neutral_object_sha256"]
+        object_bytes = previous_verification["neutral_object_bytes"]
 
     write_json(root / "IMPORT_PLAN.json", plan)
     write_json(root / "PUBLIC_IMPORT_PLAN.json", public_plan(plan))
@@ -157,6 +171,7 @@ def sanitize_workspace(
         "neutral_object_bytes": final_verification[
             "neutral_object_bytes"
         ],
+        "neutral_object_rebuilt": neutral_changed,
         "privacy": privacy,
         "sanitization": sanitization,
         "vault_modified": False,

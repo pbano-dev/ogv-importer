@@ -33,7 +33,7 @@ El importer **no**:
 
 ## Contrato único
 
-La versión 0.5.0a1 utiliza un único modelo:
+La versión 0.5.0a2 utiliza un único modelo:
 
 ```text
 ogv-import-plan-v4
@@ -359,7 +359,7 @@ Windows nativo
 bash scripts/test.sh
 ```
 
-La suite 0.5.0a1 cubre el flujo preparado, nomenclatura, inspección, partidas
+La suite 0.5.0a2 cubre el flujo preparado, nomenclatura, inspección, partidas
 multielemento, ausencia válida de estado persistente, documentación seleccionada,
 contenido adicional, privacidad, dry-run, commit y rollback, además de pruebas
 de seguridad de archivo heredadas

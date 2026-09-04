@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0a2 — 2026-09-04
+
+- Stop treating a prepared game directory basename or public game title as a
+  private host identifier. Generic roots such as `Game` previously blocked
+  ordinary Easy Anti-Cheat and mod localization text.
+- Keep blocking real host paths such as `/home/`, `/run/user/` and the absolute
+  source root.
+- Refresh privacy-only workspace metadata without rebuilding the immutable
+  archive when no neutral payload file changed.
+
 ## 0.5.0a1 — 2026-09-04
 
 - Require Offline Game Vault Core 0.19.7 or newer and probe the complete public
