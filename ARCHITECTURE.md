@@ -1,4 +1,4 @@
-# Arquitectura — OfflineGameVault Importer 0.5.0a2
+# Arquitectura — OfflineGameVault Importer 0.6.0a1
 
 ## Responsabilidad
 
@@ -35,6 +35,16 @@ cápsula game-source neutral
 
 La GUI expone el flujo completo mediante **Preparar, verificar e importar
 automáticamente** y conserva las operaciones separadas para diagnóstico.
+
+La capa gráfica mantiene el contrato técnico fuera de la vista principal:
+cada control tiene ayuda y ejemplo, mientras los desplegables traducen las
+opciones al usuario. Antes de preparar o publicar, `ImportSession` produce un
+informe único y estructurado de configuración. La GUI lo representa como una
+checklist accionable y conserva el JSON completo como detalle técnico.
+
+La ejecución pesada permanece en un hilo de trabajo. Un pulso periódico ofrece
+actividad visible en todas las operaciones y el flujo automático emite sus
+cuatro etapas: preparar, verificar, ensayar y publicar.
 
 ## Límite de autoridad
 

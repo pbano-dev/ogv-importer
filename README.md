@@ -33,7 +33,7 @@ El importer **no**:
 
 ## Contrato único
 
-La versión 0.5.0a2 utiliza un único modelo:
+La versión 0.6.0a1 utiliza un único modelo:
 
 ```text
 ogv-import-plan-v4
@@ -64,7 +64,7 @@ ogv-import-gui
 ```
 
 1. Seleccionar el Vault.
-2. Seleccionar un workspace nuevo.
+2. Elegir la carpeta padre donde la GUI propondrá un workspace nuevo.
 3. Seleccionar el directorio del juego ya aislado de tiendas.
 4. Pulsar **Inspeccionar y proponer**.
 5. Revisar título, `capsule_id`, ejecutable y destino.
@@ -74,8 +74,32 @@ ogv-import-gui
    - partidas e identidad;
    - contenido adicional;
    - documentación.
-7. Comprobar el contrato con Core 0.19.7 o posterior.
+7. Pulsar **Verificar configuración completa** y resolver los errores indicados.
 8. Pulsar **Preparar, verificar e importar automáticamente**.
+
+Todos los campos muestran un ejemplo editable y tienen un botón **?** con su
+significado, formato esperado y relación con la materialización. Los nombres
+internos del contrato se traducen en los desplegables sin cambiar los valores
+que se guardan en el plan.
+
+La verificación general comprueba en una sola operación:
+
+- identidad, identificadores y rutas relativas;
+- existencia del juego, ejecutable, partidas, runner, extras y documentos;
+- prefix opcional y su `drive_c`;
+- estructura del Vault y contrato del Core;
+- disponibilidad y estado del workspace;
+- integridad y privacidad si el workspace ya está preparado;
+- espacio libre estimado antes de copiar y empaquetar.
+
+Si hay datos escritos en Partidas, Contenido o Documentación pero todavía no
+se ha pulsado **Añadir**, la verificación los marca como error: así no pueden
+quedar fuera de la importación por accidente.
+
+El resultado se presenta como una lista de comprobaciones con estados
+**correcto**, **aviso** o **error**, además de una acción sugerida. La barra de
+progreso permanece animada durante operaciones largas y el flujo automático
+indica en cuál de sus cuatro etapas se encuentra.
 
 El flujo avanzado conserva botones separados para preparar el workspace,
 verificar, ejecutar un dry-run e importar. Ambos caminos publican únicamente
@@ -303,6 +327,14 @@ una plantilla marcada con `[RELLENAR]`, `[VERIFICAR]` o `[NO PROBADO]`.
 `PUBLIC_IMPORT_PLAN.json` elimina rutas fuente, checkout del core y comandos
 locales. La cápsula publica únicamente la copia saneada.
 
+El workspace es un área temporal de preparación, no el Vault ni la carpeta
+original del juego. Durante `prepare` contiene tanto el árbol neutral como
+`objects/neutral-game.tar.gz`; por eso puede ocupar aproximadamente dos veces
+el tamaño del juego. La importación al Vault puede requerir temporalmente una
+tercera copia si ambos destinos están en el mismo volumen. Para una importación
+nueva, la ruta final del workspace no debe existir. Para retomar uno ya
+preparado, utilice **Cargar plan…** y seleccione su `IMPORT_PLAN.json`.
+
 ## Perfil neutral
 
 El importer publica exactamente un perfil `game-source` con adapter `other`.
@@ -359,11 +391,12 @@ Windows nativo
 bash scripts/test.sh
 ```
 
-La suite 0.5.0a2 cubre el flujo preparado, nomenclatura, inspección, partidas
+La suite 0.6.0a1 cubre el flujo preparado, nomenclatura, inspección, partidas
 multielemento, ausencia válida de estado persistente, documentación seleccionada,
 contenido adicional, privacidad, dry-run, commit y rollback, además de pruebas
-de seguridad de archivo heredadas
-que siguen protegiendo las primitivas internas.
+de seguridad de archivo heredadas que siguen protegiendo las primitivas
+internas. También cubre las ayudas de todos los campos, la verificación general,
+el progreso por etapas y la detección de cambios posteriores a `prepare`.
 
 La compatibilidad real con un checkout del Core se valida con:
 

@@ -9,6 +9,12 @@ import unittest
 from unittest.mock import patch
 
 from offline_game_vault_importer.errors import ImporterError
+from offline_game_vault_importer.gui_guidance import (
+    ALL_GUIDED_FIELDS,
+    CHOICE_GUIDANCE,
+    FIELD_GUIDANCE,
+    pending_component_sections,
+)
 from offline_game_vault_importer.gui_model import ImportSession
 from offline_game_vault_importer.manual_prepare import prepare_prepared_workspace
 from offline_game_vault_importer.naming import portable_id, suggest_identifiers
@@ -45,6 +51,37 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(
             suggestions["state_examples"]["state_id"],
             "elden-ring-nightreign-save",
+        )
+
+
+class GuiGuidanceTests(unittest.TestCase):
+    def test_every_visible_input_has_help_and_example(self):
+        expected = {
+            "vault", "workspace", "manual_game", "manual_prefix", "core_root",
+            "title", "edition", "store", "appid", "version", "capsule_id",
+            "entrypoint", "game_destination", "working_directory",
+            "runner_binding", "runner_source", "runner_id", "runner_sha256",
+            "supplemental_source", "supplemental_id", "supplemental_class",
+            "documentation_source", "documentation_id", "documentation_role",
+            "documentation_name", "baseline_state", "state_source", "state_id",
+            "state_destination", "save_set_id", "save_display",
+            "state_disposition",
+        }
+        self.assertEqual(ALL_GUIDED_FIELDS, expected)
+        for guidance in (*FIELD_GUIDANCE.values(), *CHOICE_GUIDANCE.values()):
+            self.assertTrue(guidance["help"].strip())
+            self.assertTrue(guidance["example"].strip())
+
+    def test_staged_component_values_are_not_silently_ignored(self):
+        self.assertEqual(
+            pending_component_sections(
+                {
+                    "state_source": "/tmp/save",
+                    "supplemental_class": "soundtrack",
+                    "documentation_id": "notes",
+                }
+            ),
+            ["partida o estado", "documentación"],
         )
 
 
@@ -405,6 +442,109 @@ class PreparedEndToEndTests(unittest.TestCase):
 
 
 class AutomaticImportTests(unittest.TestCase):
+    def test_general_validation_reports_actionable_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "Elden Ring"
+            game.mkdir()
+            (game / "eldenring.exe").write_bytes(b"MZ-game")
+            fake = root / "fake_core.py"
+            fake.write_text(FAKE_CORE, encoding="utf-8")
+
+            session = ImportSession()
+            plan = session.new_prepared(game=game, title="Elden Ring")
+            plan["core"]["command"] = f"{sys.executable} -S {fake}"
+            session.workspace = root / "elden-ring-import"
+            session.vault = make_vault(root / "vault")
+
+            report = session.validate_configuration()
+
+            self.assertEqual(report["status"], "valid")
+            self.assertTrue(report["ready_for_prepare"])
+            self.assertFalse(report["ready_for_commit"])
+            statuses = {item["id"]: item["status"] for item in report["checks"]}
+            self.assertEqual(statuses["entrypoint"], "ok")
+            self.assertEqual(statuses["workspace"], "ok")
+            self.assertEqual(statuses["vault"], "ok")
+            self.assertEqual(statuses["core"], "ok")
+            self.assertEqual(statuses["storage"], "ok")
+
+    def test_general_validation_finds_bad_entrypoint_and_used_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "Elden Ring"
+            game.mkdir()
+            (game / "eldenring.exe").write_bytes(b"MZ-game")
+            workspace = root / "already-there"
+            workspace.mkdir()
+
+            session = ImportSession()
+            plan = session.new_prepared(game=game, title="Elden Ring")
+            plan["identity"]["title"] = ""
+            plan["identity"]["capsule_id"] = "Bad ID"
+            plan["layout"]["entrypoint"] = "missing.exe"
+            session.workspace = workspace
+            session.vault = make_vault(root / "vault")
+
+            report = session.validate_configuration(check_core=False)
+
+            self.assertEqual(report["status"], "invalid")
+            errors = {
+                item["id"]: item for item in report["checks"]
+                if item["status"] == "error"
+            }
+            self.assertIn("entrypoint", errors)
+            self.assertIn("workspace", errors)
+            self.assertIn("identity-fields", errors)
+            self.assertIn("título: vacío", errors["identity-fields"]["detail"])
+            self.assertIn("Capsule ID", errors["identity-fields"]["detail"])
+            self.assertIn("action", errors["entrypoint"])
+            self.assertIn("action", errors["workspace"])
+
+    def test_prepared_validation_uses_workspace_copies_and_detects_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "Prepared Game"
+            game.mkdir()
+            (game / "Game.exe").write_bytes(b"MZ-game")
+            soundtrack = root / "soundtrack"
+            soundtrack.mkdir()
+            (soundtrack / "track.flac").write_bytes(b"audio")
+
+            session = ImportSession()
+            session.new_prepared(game=game, title="Prepared Game")
+            session.add_supplemental(
+                item_id="soundtrack",
+                source_path=str(soundtrack),
+                classification="soundtrack",
+            )
+            session.vault = make_vault(root / "vault")
+            session.prepare(
+                game=game,
+                prefix=None,
+                workspace=root / "workspace",
+            )
+            shutil.rmtree(soundtrack)
+
+            valid = session.validate_configuration(check_core=False)
+            self.assertEqual(valid["status"], "valid")
+            self.assertTrue(valid["ready_for_commit"])
+            component = next(
+                item for item in valid["checks"] if item["id"] == "components"
+            )
+            self.assertEqual(component["status"], "ok")
+
+            session.plan["identity"]["title"] = "Changed after prepare"
+            invalid = session.validate_configuration(check_core=False)
+            self.assertEqual(invalid["status"], "invalid")
+            plan_check = next(
+                item
+                for item in invalid["checks"]
+                if item["id"] == "workspace-plan"
+            )
+            self.assertEqual(plan_check["status"], "error")
+            self.assertIn("workspace nuevo", plan_check["action"])
+
     def test_gui_session_runs_complete_neutral_import(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -427,16 +567,25 @@ class AutomaticImportTests(unittest.TestCase):
             )
             session.vault = make_vault(root / "vault")
 
+            stages: list[tuple[str, int, int]] = []
             result = session.import_prepared_game(
                 game=game,
                 prefix=None,
                 workspace=root / "workspace",
+                progress=lambda stage, current, total: stages.append(
+                    (stage, current, total)
+                ),
             )
 
             self.assertEqual(result["status"], "candidate-imported")
             self.assertEqual(result["capsule_id"], "kingdom-hearts")
             self.assertEqual(result["verify"]["status"], "verified")
             self.assertEqual(result["dry_run"]["status"], "dry-run-valid")
+            self.assertEqual(result["preflight"]["status"], "valid")
+            self.assertEqual(
+                [(current, total) for _stage, current, total in stages],
+                [(1, 4), (2, 4), (3, 4), (4, 4)],
+            )
             capsule_path = (
                 session.vault
                 / "02_CAPSULES/kingdom-hearts/capsule.json"

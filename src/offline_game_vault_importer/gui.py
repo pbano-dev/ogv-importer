@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
-import traceback
 from typing import Any
 
 from .errors import ImporterError
+from .gui_guidance import (
+    CHOICE_GUIDANCE,
+    FIELD_GUIDANCE,
+    PENDING_COMPONENT_FIELDS,
+    pending_component_sections,
+)
 from .gui_model import ImportSession
 from . import __version__
 from .planner import new_prepared_plan
 from .naming import suggest_identifiers
-from .util import write_json
 
 try:
     import gi
@@ -39,6 +43,9 @@ if Gtk is not None:
             self.set_default_size(1040, 760)
             self.session = ImportSession()
             self.entries: dict[str, Gtk.Entry] = {}
+            self.example_labels: dict[str, Gtk.Label] = {}
+            self._busy = False
+            self._pulse_source_id: int | None = None
             self._build()
 
         def _build(self) -> None:
@@ -64,12 +71,12 @@ if Gtk is not None:
             title.set_xalign(0)
             title.set_hexpand(True)
             header.append(title)
-            new_button = Gtk.Button(label="Nuevo plan")
-            new_button.connect("clicked", self._new_manual)
-            header.append(new_button)
-            load_button = Gtk.Button(label="Cargar plan…")
-            load_button.connect("clicked", self._load_plan_dialog)
-            header.append(load_button)
+            self.new_button = Gtk.Button(label="Nuevo plan")
+            self.new_button.connect("clicked", self._new_manual)
+            header.append(self.new_button)
+            self.load_button = Gtk.Button(label="Cargar plan…")
+            self.load_button.connect("clicked", self._load_plan_dialog)
+            header.append(self.load_button)
             root.append(header)
 
             self.notebook = Gtk.Notebook()
@@ -95,6 +102,8 @@ if Gtk is not None:
             status_box.append(self.status)
             self.progress = Gtk.ProgressBar()
             self.progress.set_visible(False)
+            self.progress.set_show_text(True)
+            self.progress.set_pulse_step(0.025)
             status_box.append(self.progress)
             root.append(status_box)
 
@@ -123,6 +132,11 @@ if Gtk is not None:
             *,
             folder: bool | None,
         ) -> None:
+            guidance = FIELD_GUIDANCE[key]
+            container = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=3,
+            )
             row = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL,
                 spacing=8,
@@ -131,31 +145,48 @@ if Gtk is not None:
             text.set_xalign(0)
             text.set_size_request(180, -1)
             row.append(text)
+            row.append(self._help_button(key, label, guidance))
             entry = Gtk.Entry()
             entry.set_hexpand(True)
+            entry.set_placeholder_text(guidance["example"])
+            entry.set_tooltip_text(guidance["help"])
             self.entries[key] = entry
             row.append(entry)
             if folder is None:
                 file_button = Gtk.Button(label="Archivo…")
                 file_button.connect(
                     "clicked",
-                    lambda _button: self._choose_path(entry, folder=False),
+                    lambda _button: self._choose_path(
+                        entry, folder=False, key=key
+                    ),
                 )
                 row.append(file_button)
                 folder_button = Gtk.Button(label="Directorio…")
                 folder_button.connect(
                     "clicked",
-                    lambda _button: self._choose_path(entry, folder=True),
+                    lambda _button: self._choose_path(
+                        entry, folder=True, key=key
+                    ),
                 )
                 row.append(folder_button)
             else:
-                button = Gtk.Button(label="Seleccionar…")
+                button = Gtk.Button(
+                    label=(
+                        "Elegir carpeta padre…"
+                        if key == "workspace"
+                        else "Seleccionar…"
+                    )
+                )
                 button.connect(
                     "clicked",
-                    lambda _button: self._choose_path(entry, folder=folder),
+                    lambda _button: self._choose_path(
+                        entry, folder=folder, key=key
+                    ),
                 )
                 row.append(button)
-            box.append(row)
+            container.append(row)
+            container.append(self._example_label(key, guidance["example"]))
+            box.append(container)
 
         def _field(
             self,
@@ -164,16 +195,100 @@ if Gtk is not None:
             key: str,
             label: str,
         ) -> None:
+            guidance = FIELD_GUIDANCE[key]
+            label_box = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL,
+                spacing=4,
+            )
             text = Gtk.Label(label=label)
             text.set_xalign(0)
-            grid.attach(text, 0, row, 1, 1)
+            label_box.append(text)
+            label_box.append(self._help_button(key, label, guidance))
+            grid.attach(label_box, 0, row, 1, 1)
+            value_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=3,
+            )
             entry = Gtk.Entry()
             entry.set_hexpand(True)
+            entry.set_placeholder_text(guidance["example"])
+            entry.set_tooltip_text(guidance["help"])
             self.entries[key] = entry
-            grid.attach(entry, 1, row, 1, 1)
+            value_box.append(entry)
+            value_box.append(self._example_label(key, guidance["example"]))
+            grid.attach(value_box, 1, row, 1, 1)
+
+        def _help_button(
+            self,
+            key: str,
+            label: str,
+            guidance: dict[str, str],
+        ) -> Gtk.Button:
+            button = Gtk.Button(label="?")
+            button.add_css_class("flat")
+            button.set_tooltip_text(guidance["help"])
+            button.connect(
+                "clicked",
+                lambda _button: self._show_field_help(key, label),
+            )
+            return button
+
+        def _example_label(self, key: str, example: str) -> Gtk.Label:
+            value = Gtk.Label(label=f"Ejemplo: {example}")
+            value.set_xalign(0)
+            value.set_wrap(True)
+            value.set_selectable(True)
+            value.add_css_class("dim-label")
+            self.example_labels[key] = value
+            return value
+
+        def _show_field_help(self, key: str, label: str) -> None:
+            guidance = FIELD_GUIDANCE.get(key) or CHOICE_GUIDANCE[key]
+            dialog = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.CLOSE,
+                text=label,
+            )
+            dialog.format_secondary_text(
+                f"{guidance['help']}\n\nEjemplo: {guidance['example']}"
+            )
+            dialog.connect("response", lambda current, _response: current.destroy())
+            dialog.present()
+
+        def _choice_row(
+            self,
+            box: Gtk.Box,
+            key: str,
+            label: str,
+            options: list[str],
+        ) -> Gtk.DropDown:
+            guidance = CHOICE_GUIDANCE[key]
+            container = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=3,
+            )
+            row = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL,
+                spacing=8,
+            )
+            text = Gtk.Label(label=label)
+            text.set_xalign(0)
+            text.set_size_request(180, -1)
+            row.append(text)
+            row.append(self._help_button(key, label, guidance))
+            dropdown = Gtk.DropDown.new_from_strings(options)
+            dropdown.set_hexpand(True)
+            dropdown.set_tooltip_text(guidance["help"])
+            row.append(dropdown)
+            container.append(row)
+            container.append(self._example_label(key, guidance["example"]))
+            box.append(container)
+            return dropdown
 
         def _build_paths_page(self) -> None:
-            _, box = self._page("Origen")
+            _, box = self._page("1 · Origen")
             note = Gtk.Label(
                 label=(
                     "Seleccione un directorio de juego ya funcional y aislado "
@@ -210,7 +325,7 @@ if Gtk is not None:
             box.append(actions)
 
         def _build_identity_page(self) -> None:
-            _, box = self._page("Identidad")
+            _, box = self._page("2 · Identidad")
             grid = Gtk.Grid(column_spacing=12, row_spacing=8)
             box.append(grid)
             for row, (key, label) in enumerate(
@@ -241,7 +356,7 @@ if Gtk is not None:
             box.append(actions)
 
         def _build_components_page(self) -> None:
-            _, box = self._page("Componentes")
+            _, box = self._page("3 · Componentes")
             runner_frame = Gtk.Frame(
                 label="Runner adicional a preservar (opcional)"
             )
@@ -255,15 +370,12 @@ if Gtk is not None:
             runner_frame.set_child(runner_box)
             box.append(runner_frame)
 
-            binding_row = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=8
+            self.runner_binding = self._choice_row(
+                runner_box,
+                "runner_binding",
+                "Vinculación",
+                ["Elegir al materializar"],
             )
-            binding_row.append(Gtk.Label(label="Vinculación"))
-            self.runner_binding = Gtk.DropDown.new_from_strings(
-                ["select-at-materialization"]
-            )
-            binding_row.append(self.runner_binding)
-            runner_box.append(binding_row)
             runner_note = Gtk.Label(
                 label=(
                     "El runner se conserva como objeto reutilizable, pero no "
@@ -346,7 +458,7 @@ if Gtk is not None:
             docs_box.append(self.documentation_list)
 
         def _build_state_page(self) -> None:
-            _, box = self._page("Partidas y estado")
+            _, box = self._page("4 · Partidas y estado")
             note = Gtk.Label(
                 label=(
                     "Cada fichero o directorio puede seleccionarse manualmente. "
@@ -358,15 +470,15 @@ if Gtk is not None:
             note.set_xalign(0)
             box.append(note)
 
-            baseline_row = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=8
+            self.baseline_state = self._choice_row(
+                box,
+                "baseline_state",
+                "Estado inicial",
+                [
+                    "No confirmado / posiblemente incrustado",
+                    "Limpio / sin estado incrustado",
+                ],
             )
-            baseline_row.append(Gtk.Label(label="Estado del baseline"))
-            self.baseline_state = Gtk.DropDown.new_from_strings(
-                ["embedded-or-unknown", "clean"]
-            )
-            baseline_row.append(self.baseline_state)
-            box.append(baseline_row)
 
             self._path_row(
                 box, "state_source", "Fuente del estado", folder=None
@@ -378,22 +490,19 @@ if Gtk is not None:
             self._field(grid, 2, "save_set_id", "Save-set")
             self._field(grid, 3, "save_display", "Nombre visible")
 
-            disposition_row = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=8
-            )
-            disposition_row.append(Gtk.Label(label="Disposición"))
-            self.state_disposition = Gtk.DropDown.new_from_strings(
+            self.state_disposition = self._choice_row(
+                box,
+                "state_disposition",
+                "Cómo tratarlo",
                 [
-                    "save-set",
-                    "identity",
-                    "configuration",
-                    "exclude",
-                    "embedded",
-                    "unbound",
-                ]
+                    "Partida restaurable (save-set)",
+                    "Identidad o cuenta",
+                    "Configuración",
+                    "Excluir",
+                    "Ya incluido en el juego",
+                    "Sin destino conocido",
+                ],
             )
-            disposition_row.append(self.state_disposition)
-            box.append(disposition_row)
 
             add = Gtk.Button(label="Añadir estado")
             add.connect("clicked", self._add_state)
@@ -421,37 +530,81 @@ if Gtk is not None:
             box.append(note)
 
         def _build_commit_page(self) -> None:
-            _, box = self._page("Validar e importar")
+            _, box = self._page("5 · Verificar e importar")
+            note = Gtk.Label(
+                label=(
+                    "Verifique toda la configuración antes de preparar o "
+                    "importar. El resultado muestra cada comprobación y una "
+                    "acción concreta cuando algo requiere atención."
+                )
+            )
+            note.set_xalign(0)
+            note.set_wrap(True)
+            box.append(note)
+
+            result_frame = Gtk.Frame(label="Resultado")
+            result_box = Gtk.Box(
+                orientation=Gtk.Orientation.VERTICAL,
+                spacing=8,
+            )
+            result_box.set_margin_top(10)
+            result_box.set_margin_bottom(10)
+            result_box.set_margin_start(10)
+            result_box.set_margin_end(10)
+            result_frame.set_child(result_box)
+            box.append(result_frame)
+            self.result_banner = Gtk.Label(
+                label="Aún no se ha ejecutado la verificación general."
+            )
+            self.result_banner.set_xalign(0)
+            self.result_banner.set_wrap(True)
+            result_box.append(self.result_banner)
+            self.checklist = Gtk.Label(label="")
+            self.checklist.set_xalign(0)
+            self.checklist.set_wrap(True)
+            self.checklist.set_selectable(True)
+            result_box.append(self.checklist)
+
+            technical = Gtk.Expander(label="Detalles técnicos")
             self.summary = Gtk.Label(
                 label="Cargue o cree un plan para ver el resumen."
             )
             self.summary.set_xalign(0)
             self.summary.set_wrap(True)
             self.summary.set_selectable(True)
-            box.append(self.summary)
+            technical.set_child(self.summary)
+            box.append(technical)
             actions = Gtk.Box(
-                orientation=Gtk.Orientation.HORIZONTAL, spacing=8
+                orientation=Gtk.Orientation.VERTICAL, spacing=8
             )
-            validate = Gtk.Button(label="Validar selección")
-            validate.connect("clicked", self._validate)
-            actions.append(validate)
+            self.validate_button = Gtk.Button(
+                label="Verificar configuración completa"
+            )
+            self.validate_button.add_css_class("suggested-action")
+            self.validate_button.connect("clicked", self._validate_all)
+            actions.append(self.validate_button)
+            advanced_actions = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL,
+                spacing=8,
+            )
             self.verify_button = Gtk.Button(label="Verificar workspace")
             self.verify_button.connect("clicked", self._verify_workspace)
             self.verify_button.set_sensitive(False)
-            actions.append(self.verify_button)
+            advanced_actions.append(self.verify_button)
             self.dry_button = Gtk.Button(label="Ensayo de importación")
             self.dry_button.connect(
                 "clicked", lambda _b: self._commit(dry_run=True)
             )
             self.dry_button.set_sensitive(False)
-            actions.append(self.dry_button)
+            advanced_actions.append(self.dry_button)
             self.commit_button = Gtk.Button(label="Importar al Vault")
             self.commit_button.add_css_class("suggested-action")
             self.commit_button.connect(
                 "clicked", lambda _b: self._commit(dry_run=False)
             )
             self.commit_button.set_sensitive(False)
-            actions.append(self.commit_button)
+            advanced_actions.append(self.commit_button)
+            actions.append(advanced_actions)
             box.append(actions)
             self.automatic_button = Gtk.Button(
                 label="Preparar, verificar e importar automáticamente"
@@ -460,9 +613,19 @@ if Gtk is not None:
             self.automatic_button.connect("clicked", self._automatic_import)
             box.append(self.automatic_button)
 
-        def _choose_path(self, entry: Gtk.Entry, *, folder: bool) -> None:
+        def _choose_path(
+            self,
+            entry: Gtk.Entry,
+            *,
+            folder: bool,
+            key: str,
+        ) -> None:
             dialog = Gtk.FileChooserNative(
-                title="Seleccionar",
+                title=(
+                    "Elegir dónde crear el workspace"
+                    if key == "workspace"
+                    else "Seleccionar"
+                ),
                 transient_for=self,
                 action=(
                     Gtk.FileChooserAction.SELECT_FOLDER
@@ -476,17 +639,71 @@ if Gtk is not None:
                 if response_id == Gtk.ResponseType.ACCEPT:
                     selected = native.get_file()
                     if selected is not None and selected.get_path():
-                        entry.set_text(selected.get_path())
+                        selected_path = Path(selected.get_path())
+                        if key == "workspace":
+                            title = self._entry("title") or None
+                            game = self._entry("manual_game") or None
+                            suggestion = suggest_identifiers(
+                                title=title,
+                                game_directory=game,
+                            )["capsule_id"]
+                            candidate = selected_path / f"{suggestion}-import"
+                            suffix = 2
+                            while candidate.exists() or candidate.is_symlink():
+                                candidate = selected_path / (
+                                    f"{suggestion}-import-{suffix}"
+                                )
+                                suffix += 1
+                            entry.set_text(str(candidate))
+                            self.status.set_text(
+                                "Se creará un workspace nuevo en "
+                                f"{candidate}."
+                            )
+                        else:
+                            entry.set_text(str(selected_path))
                 native.destroy()
             dialog.connect("response", response)
             dialog.show()
 
         def _set_busy(self, busy: bool, message: str = "") -> None:
+            self._busy = busy
             self.progress.set_visible(busy)
             if busy:
-                self.progress.pulse()
+                self.progress.set_text(message or "Trabajando…")
+                if self._pulse_source_id is None:
+                    self._pulse_source_id = GLib.timeout_add(
+                        100, self._pulse_progress
+                    )
+            elif self._pulse_source_id is not None:
+                GLib.source_remove(self._pulse_source_id)
+                self._pulse_source_id = None
+                self.progress.set_fraction(0.0)
+                self.progress.set_text("")
+            self.new_button.set_sensitive(not busy)
+            self.load_button.set_sensitive(not busy)
+            self.notebook.set_sensitive(not busy)
             if message:
                 self.status.set_text(message)
+            if not busy:
+                self._update_action_sensitivity()
+
+        def _pulse_progress(self) -> bool:
+            if not self._busy:
+                self._pulse_source_id = None
+                return False
+            self.progress.pulse()
+            return True
+
+        def _operation_progress(
+            self,
+            stage: str,
+            current: int,
+            total: int,
+        ) -> bool:
+            message = f"Paso {current} de {total}: {stage}"
+            self.progress.set_text(message)
+            self.status.set_text(message)
+            return False
 
         def _run_background(self, label: str, function) -> None:
             self._set_busy(True, label)
@@ -503,6 +720,13 @@ if Gtk is not None:
         def _operation_failed(self, label: str, detail: str) -> bool:
             self._set_busy(False)
             self.status.set_text(f"{label}: ERROR — {detail}")
+            self.result_banner.set_text(f"✗ {label} no se pudo completar")
+            self.checklist.set_text(
+                f"• {detail}\n  Acción: revise los campos indicados y vuelva "
+                "a ejecutar la verificación general."
+            )
+            if label in {"Preparación", "Importación automática"}:
+                self.notebook.set_current_page(4)
             return False
 
         def _operation_finished(self, label: str, result: Any) -> bool:
@@ -510,16 +734,66 @@ if Gtk is not None:
             rendered = json.dumps(
                 result, ensure_ascii=False, indent=2, sort_keys=True
             )
-            self.status.set_text(f"{label}: completado")
-            self.summary.set_text(rendered)
             if label == "Inspección":
                 # Load the automatically proposed AppID, layout and runner into
                 # the editable fields. Detection remains advisory: the user can
                 # replace every value before preparing the workspace.
                 self._populate()
+                self.notebook.set_current_page(1)
             else:
                 self._refresh()
+            self.summary.set_text(rendered)
+            if isinstance(result, dict) and isinstance(
+                result.get("checks"), list
+            ):
+                self._render_checks(label, result)
+            else:
+                status = (
+                    result.get("status", "completado")
+                    if isinstance(result, dict)
+                    else "completado"
+                )
+                self.status.set_text(f"{label}: {status}")
+                self.result_banner.set_text(f"✓ {label}: {status}")
+                capsule_id = (
+                    result.get("capsule_id")
+                    if isinstance(result, dict)
+                    else None
+                )
+                self.checklist.set_text(
+                    f"Cápsula: {capsule_id}"
+                    if capsule_id
+                    else "La operación terminó correctamente."
+                )
+                if label in {"Preparación", "Importación automática"}:
+                    self.notebook.set_current_page(4)
             return False
+
+        def _render_checks(self, label: str, result: dict[str, Any]) -> None:
+            status = result.get("status")
+            errors = int(result.get("errors", 0))
+            warnings = int(result.get("warnings", 0))
+            if status == "valid":
+                banner = (
+                    f"✓ Configuración válida — {warnings} aviso(s)"
+                    if warnings
+                    else "✓ Configuración válida y lista"
+                )
+            else:
+                banner = f"✗ Configuración incompleta — {errors} error(es)"
+            lines: list[str] = []
+            icons = {"ok": "✓", "warning": "⚠", "error": "✗"}
+            for check in result["checks"]:
+                icon = icons.get(check.get("status"), "•")
+                lines.append(
+                    f"{icon} {check.get('label')}: {check.get('detail')}"
+                )
+                action = check.get("action")
+                if action:
+                    lines.append(f"  Acción: {action}")
+            self.result_banner.set_text(banner)
+            self.checklist.set_text("\n".join(lines))
+            self.status.set_text(f"{label}: {banner}")
 
         def _entry(self, key: str) -> str:
             return self.entries[key].get_text().strip()
@@ -532,8 +806,13 @@ if Gtk is not None:
                 game_directory=game or None,
             )
             self.session.plan_path = None
+            self.session.inspection = None
             self._populate()
             self.status.set_text("Plan nuevo para juego desacoplado.")
+            self.result_banner.set_text(
+                "Aún no se ha ejecutado la verificación general."
+            )
+            self.checklist.set_text("")
 
         def _load_plan_dialog(self, _button: Gtk.Button) -> None:
             dialog = Gtk.FileChooserNative(
@@ -636,13 +915,14 @@ if Gtk is not None:
             vault = self._entry("vault")
             workspace = self._entry("workspace")
             game = self._entry("manual_game")
-            if vault:
-                self.session.vault = Path(vault)
-            if workspace:
-                self.session.workspace = Path(workspace)
-            if game:
-                self.session.game_directory = Path(game)
+            prefix = self._entry("manual_prefix")
+            self.session.vault = Path(vault) if vault else None
+            self.session.workspace = Path(workspace) if workspace else None
+            self.session.game_directory = Path(game) if game else None
             if self.session.plan is not None:
+                source = self.session.plan.setdefault("source", {})
+                source["game_directory"] = game or None
+                source["prefix_directory"] = prefix or None
                 core = self._entry("core_root")
                 self.session.plan.setdefault("core", {})["source_root"] = (
                     core or None
@@ -655,21 +935,91 @@ if Gtk is not None:
                     baseline_values[selected]
                 )
 
+        def _sync_identity_layout(self) -> None:
+            self.session.set_identity(
+                title=self._entry("title"),
+                edition=self._entry("edition"),
+                store=self._entry("store"),
+                appid=self._entry("appid"),
+                version=self._entry("version"),
+                capsule_id=self._entry("capsule_id"),
+            )
+            self.session.set_layout(
+                entrypoint=self._entry("entrypoint"),
+                game_destination=self._entry("game_destination"),
+                working_directory=self._entry("working_directory"),
+            )
+
+        def _sync_runner(self) -> None:
+            self.session.set_runner(
+                binding="select-at-materialization",
+                source_path=self._entry("runner_source") or None,
+                preferred_id=self._entry("runner_id") or None,
+                digest=self._entry("runner_sha256") or None,
+            )
+
+        def _sync_profiles(self) -> None:
+            if self.session.plan is None:
+                raise ImporterError("no hay un plan cargado")
+            for adapter, check in self.profile_checks.items():
+                entry = self.profile_entries[adapter]
+                self.session.set_profile(
+                    adapter=adapter,
+                    profile_id=(
+                        entry.get_text().strip()
+                        or entry.get_placeholder_text()
+                    ),
+                    enabled=check.get_active(),
+                )
+
+        def _sync_form_to_session(self) -> None:
+            if self.session.plan is None:
+                raise ImporterError(
+                    "inspeccione primero el directorio para crear el plan"
+                )
+            self._sync_identity_layout()
+            self._sync_runner()
+            self._sync_profiles()
+            self._sync_paths()
+
+        def _pending_component_inputs(self) -> list[str]:
+            keys = {
+                key
+                for fields in PENDING_COMPONENT_FIELDS.values()
+                for key in fields
+            }
+            return pending_component_sections(
+                {key: self._entry(key) for key in keys}
+            )
+
+        def _validation_with_pending_inputs(
+            self,
+            pending: list[str],
+        ) -> dict[str, Any]:
+            result = self.session.validate_configuration()
+            if not pending:
+                return result
+            result["checks"].append(
+                {
+                    "id": "pending-inputs",
+                    "label": "Datos todavía sin añadir",
+                    "status": "error",
+                    "detail": ", ".join(pending),
+                    "action": (
+                        "Pulse Añadir en cada sección o vacíe esos campos; "
+                        "el texto escrito por sí solo aún no forma parte del plan."
+                    ),
+                }
+            )
+            result["errors"] = int(result.get("errors", 0)) + 1
+            result["status"] = "invalid"
+            result["ready_for_prepare"] = False
+            result["ready_for_commit"] = False
+            return result
+
         def _apply_identity(self, _button=None) -> None:
             try:
-                self.session.set_identity(
-                    title=self._entry("title"),
-                    edition=self._entry("edition"),
-                    store=self._entry("store"),
-                    appid=self._entry("appid"),
-                    version=self._entry("version"),
-                    capsule_id=self._entry("capsule_id"),
-                )
-                self.session.set_layout(
-                    entrypoint=self._entry("entrypoint"),
-                    game_destination=self._entry("game_destination"),
-                    working_directory=self._entry("working_directory"),
-                )
+                self._sync_identity_layout()
                 self._sync_paths()
                 self.status.set_text("Identidad y layout aplicados.")
                 self._refresh()
@@ -678,12 +1028,7 @@ if Gtk is not None:
 
         def _apply_runner(self, _button=None) -> None:
             try:
-                self.session.set_runner(
-                    binding="select-at-materialization",
-                    source_path=self._entry("runner_source") or None,
-                    preferred_id=self._entry("runner_id") or None,
-                    digest=self._entry("runner_sha256") or None,
-                )
+                self._sync_runner()
                 self.status.set_text("Runner aplicado.")
                 self._refresh()
             except Exception as exc:
@@ -814,14 +1159,7 @@ if Gtk is not None:
             if self.session.plan is None:
                 return
             try:
-                for adapter, check in self.profile_checks.items():
-                    entry = self.profile_entries[adapter]
-                    self.session.set_profile(
-                        adapter=adapter,
-                        profile_id=entry.get_text().strip()
-                        or entry.get_placeholder_text(),
-                        enabled=check.get_active(),
-                    )
+                self._sync_profiles()
                 self.status.set_text("Perfiles aplicados.")
                 self._refresh()
             except Exception as exc:
@@ -836,10 +1174,16 @@ if Gtk is not None:
                 and (workspace / "IMPORT_PLAN.json").is_file()
                 and (workspace / "objects/neutral-game.tar.gz").is_file()
             )
-            self.verify_button.set_sensitive(prepared)
-            self.dry_button.set_sensitive(prepared)
-            self.commit_button.set_sensitive(prepared)
-            self.automatic_button.set_sensitive(self.session.plan is not None)
+            enabled = not self._busy
+            self.validate_button.set_sensitive(
+                enabled and self.session.plan is not None
+            )
+            self.verify_button.set_sensitive(enabled and prepared)
+            self.dry_button.set_sensitive(enabled and prepared)
+            self.commit_button.set_sensitive(enabled and prepared)
+            self.automatic_button.set_sensitive(
+                enabled and self.session.plan is not None and not prepared
+            )
 
         def _refresh(self) -> None:
             plan = self.session.plan
@@ -909,6 +1253,12 @@ if Gtk is not None:
             )
 
         def _check_core(self, _button=None) -> None:
+            if self.session.plan is None:
+                self.session.plan = new_prepared_plan(
+                    title=self._entry("title") or None,
+                    game_directory=self._entry("manual_game") or None,
+                )
+                self._populate()
             self._sync_paths()
             self._run_background(
                 "Contrato del Core",
@@ -921,10 +1271,11 @@ if Gtk is not None:
                     "Inspeccione primero el directorio para crear el plan."
                 )
                 return
-            self._apply_identity()
-            self._apply_runner()
-            self._apply_profiles()
-            self._sync_paths()
+            try:
+                self._sync_form_to_session()
+            except Exception as exc:
+                self._operation_failed("Preparación", str(exc))
+                return
             game = self._entry("manual_game")
             prefix = self._entry("manual_prefix")
             if not game or self.session.workspace is None:
@@ -932,38 +1283,47 @@ if Gtk is not None:
                     "Indique el directorio del juego y un workspace nuevo."
                 )
                 return
-            self._run_background(
-                "Preparación",
-                lambda: self.session.prepare(
+            pending = self._pending_component_inputs()
+
+            def prepare_checked() -> dict[str, Any]:
+                preflight = self._validation_with_pending_inputs(pending)
+                if preflight["status"] != "valid":
+                    failures = "; ".join(
+                        item["detail"]
+                        for item in preflight["checks"]
+                        if item["status"] == "error"
+                    )
+                    raise ImporterError(
+                        "la verificación general encontró errores: " + failures
+                    )
+                prepared = self.session.prepare(
                     game=Path(game),
                     prefix=Path(prefix) if prefix else None,
                     workspace=self.session.workspace,
-                ),
+                )
+                return {
+                    "schema": 0,
+                    "status": "prepared-and-verified",
+                    "preflight": preflight,
+                    "prepare": prepared,
+                }
+
+            self._run_background(
+                "Preparación",
+                prepare_checked,
             )
 
-        def _validate(self, _button=None) -> None:
+        def _validate_all(self, _button=None) -> None:
             try:
-                self._apply_identity()
-                self._apply_runner()
-                self._apply_profiles()
-                self._sync_paths()
-                result = self.session.validate("commit")
-                if (
-                    self.session.workspace is not None
-                    and self.session.workspace.is_dir()
-                    and (
-                        self.session.workspace / "PREPARE_RECEIPT.json"
-                    ).is_file()
-                ):
-                    write_json(
-                        self.session.workspace / "IMPORT_PLAN.json",
-                        self.session.plan,
-                    )
-                elif self.session.plan_path is not None:
-                    write_json(self.session.plan_path, self.session.plan)
-                self._operation_finished("Validación", result)
+                self._sync_form_to_session()
             except Exception as exc:
-                self.status.set_text(f"Validación: ERROR — {exc}")
+                self._operation_failed("Verificación general", str(exc))
+                return
+            pending = self._pending_component_inputs()
+            self._run_background(
+                "Verificación general",
+                lambda: self._validation_with_pending_inputs(pending),
+            )
 
         def _verify_workspace(self, _button=None) -> None:
             self._sync_paths()
@@ -973,14 +1333,31 @@ if Gtk is not None:
             )
 
         def _commit(self, *, dry_run: bool) -> None:
-            self._sync_paths()
-            self._apply_identity()
-            self._apply_runner()
-            self._apply_profiles()
             label = "Ensayo de importación" if dry_run else "Importación"
+            try:
+                self._sync_form_to_session()
+            except Exception as exc:
+                self._operation_failed(label, str(exc))
+                return
+            pending = self._pending_component_inputs()
+
+            def commit_checked() -> dict[str, Any]:
+                preflight = self._validation_with_pending_inputs(pending)
+                if preflight["status"] != "valid":
+                    failures = "; ".join(
+                        item["detail"]
+                        for item in preflight["checks"]
+                        if item["status"] == "error"
+                    )
+                    raise ImporterError(
+                        "la verificación general encontró errores: " + failures
+                    )
+                committed = self.session.commit(dry_run=dry_run)
+                return {**committed, "preflight": preflight}
+
             self._run_background(
                 label,
-                lambda: self.session.commit(dry_run=dry_run),
+                commit_checked,
             )
 
         def _automatic_import(self, _button=None) -> None:
@@ -989,13 +1366,25 @@ if Gtk is not None:
                     "Inspeccione primero el directorio para crear el plan."
                 )
                 return
-            self._apply_identity()
-            self._apply_runner()
-            self._apply_profiles()
-            self._sync_paths()
+            try:
+                self._sync_form_to_session()
+            except Exception as exc:
+                self._operation_failed("Importación automática", str(exc))
+                return
             game = self._entry("manual_game")
             prefix = self._entry("manual_prefix")
             workspace = self.session.workspace
+            pending = self._pending_component_inputs()
+            if pending:
+                self._operation_failed(
+                    "Importación automática",
+                    (
+                        "hay datos escritos pero aún no añadidos: "
+                        + ", ".join(pending)
+                        + ". Pulse Añadir en cada sección o vacíe esos campos."
+                    ),
+                )
+                return
             if not game or workspace is None or self.session.vault is None:
                 self.status.set_text(
                     "Indique juego, workspace nuevo y Vault de destino."
@@ -1007,6 +1396,12 @@ if Gtk is not None:
                     game=Path(game),
                     prefix=Path(prefix) if prefix else None,
                     workspace=workspace,
+                    progress=lambda stage, current, total: GLib.idle_add(
+                        self._operation_progress,
+                        stage,
+                        current,
+                        total,
+                    ),
                 ),
             )
 

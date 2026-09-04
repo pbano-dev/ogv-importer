@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0a1 — 2026-09-04
+
+- Add contextual **?** help, tooltips and visible examples to every editable
+  field and choice in the GTK4 GUI.
+- Replace internal choice labels with user-facing Spanish descriptions while
+  retaining the exact v4 contract values in the plan.
+- Add a complete configuration check for identity, paths, selected components,
+  prefix, workspace, Vault, Core, privacy, integrity and estimated free space.
+- Present validation as an actionable checklist and retain raw JSON under
+  expandable technical details.
+- Keep the progress bar animated throughout background work and expose the four
+  automatic-import stages.
+- Make the workspace chooser select a parent and propose a new, non-existing
+  destination instead of encouraging an invalid existing directory.
+- Refuse to commit edits made after workspace preparation until a new workspace
+  is prepared, while accepting verified workspace copies when original optional
+  sources have moved.
+- Detect staged save, supplemental-content or documentation fields that have not
+  been added to the plan instead of silently omitting them.
+
 ## 0.5.0a2 — 2026-09-04
 
 - Stop treating a prepared game directory basename or public game title as a

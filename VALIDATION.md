@@ -1,4 +1,4 @@
-# Validación — OfflineGameVault Importer 0.5.0a2
+# Validación — OfflineGameVault Importer 0.6.0a1
 
 ## Suite aislada
 
@@ -10,6 +10,16 @@ La suite cubre el plan neutral v4, inspección, nomenclatura, workspace
 determinista, privacidad, estado persistente, contenido adicional, dry-run,
 commit, rollback y rechazo de rutas o tipos inseguros. También prueba el flujo
 completo que usa la GUI: preparar, verificar, ensayar e importar.
+
+La verificación general de la GUI tiene pruebas específicas para configuración
+válida e inválida. Cubre ejecutable, workspace nuevo o preparado, Vault, Core,
+componentes seleccionados, prefix, privacidad, espacio libre y divergencias
+entre el plan visible y el plan con el que se preparó el objeto inmutable. Las
+fuentes originales de partidas y extras dejan de ser necesarias una vez que su
+copia del workspace ha sido verificada.
+
+También se comprueba que todos los campos visibles tengan texto de ayuda y
+ejemplo, y que el flujo automático comunique sus cuatro etapas en orden.
 
 ## Contrato con el Core actual
 
