@@ -63,6 +63,7 @@ class V4NeutralSourceTests(unittest.TestCase):
         profile = capsule["profiles"][0]
         self.assertEqual(profile["id"], "game-source")
         self.assertEqual(profile["adapter"], "other")
+        self.assertNotIn("status", profile)
         self.assertEqual(
             profile["host_contract"],
             "host-contracts/game-source.json",

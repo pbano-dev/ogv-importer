@@ -74,7 +74,7 @@ class PreparedDirectoryTests(unittest.TestCase):
                 any("no demuestra" in item for item in inspection["limits"])
             )
 
-    def test_plan_v3_has_one_source_model(self):
+    def test_plan_v4_has_one_store_neutral_source_model(self):
         plan = new_prepared_plan(
             title="Test Game",
             game_directory="/tmp/Test Game",
@@ -85,11 +85,20 @@ class PreparedDirectoryTests(unittest.TestCase):
             "prepared-offline-game-directory-v1",
         )
         self.assertTrue(plan["source"]["steam_independent"])
+        self.assertTrue(plan["source"]["store_client_independent"])
         self.assertTrue(plan["source"]["preparation"]["performed_before_import"])
         self.assertEqual(
-            [p["adapter"] for p in plan["profiles"] if p["enabled"]],
-            ["bottles"],
+            plan["identity"]["source_store"],
+            "Prepared offline copy",
         )
+        self.assertEqual(plan["identity"]["preserved_version"], "unknown")
+        self.assertEqual(
+            [p["adapter"] for p in plan["profiles"] if p["enabled"]],
+            ["other"],
+        )
+        plan["profiles"][0]["platform"] = "windows"
+        with self.assertRaisesRegex(ImporterError, "platform=linux"):
+            validate_plan(plan, phase="gui")
         public = public_plan(plan)
         self.assertIsNone(public["source"]["game_directory"])
         with self.assertRaises(ImporterError):
@@ -315,6 +324,57 @@ class PreparedEndToEndTests(unittest.TestCase):
             self.assertEqual(
                 result["documentation"][0]["status"],
                 "selected-and-hashed",
+            )
+
+
+class AutomaticImportTests(unittest.TestCase):
+    def test_gui_session_runs_complete_neutral_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / "Kingdom Hearts"
+            game.mkdir()
+            (game / "KINGDOM HEARTS.exe").write_bytes(b"MZ-game")
+            soundtrack = root / "soundtrack"
+            soundtrack.mkdir()
+            (soundtrack / "track.flac").write_bytes(b"audio")
+            fake = root / "fake_core.py"
+            fake.write_text(FAKE_CORE, encoding="utf-8")
+
+            session = ImportSession()
+            plan = session.new_prepared(game=game, title="Kingdom Hearts")
+            plan["core"]["command"] = f"{sys.executable} -S {fake}"
+            session.add_supplemental(
+                item_id="soundtrack",
+                source_path=str(soundtrack),
+                classification="soundtrack",
+            )
+            session.vault = make_vault(root / "vault")
+
+            result = session.import_prepared_game(
+                game=game,
+                prefix=None,
+                workspace=root / "workspace",
+            )
+
+            self.assertEqual(result["status"], "candidate-imported")
+            self.assertEqual(result["capsule_id"], "kingdom-hearts")
+            self.assertEqual(result["verify"]["status"], "verified")
+            self.assertEqual(result["dry_run"]["status"], "dry-run-valid")
+            capsule_path = (
+                session.vault
+                / "02_CAPSULES/kingdom-hearts/capsule.json"
+            )
+            capsule = json.loads(capsule_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(capsule["profiles"]), 1)
+            self.assertEqual(capsule["profiles"][0]["id"], "game-source")
+            self.assertEqual(capsule["profiles"][0]["adapter"], "other")
+            self.assertEqual(
+                [item["id"] for item in capsule["optional_content"]],
+                ["soundtrack"],
+            )
+            self.assertEqual(
+                result["commit"]["core_contract"]["minimum_version"],
+                "0.19.7",
             )
 
 

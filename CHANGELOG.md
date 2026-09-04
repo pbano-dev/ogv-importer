@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0a1 — 2026-09-04
+
+- Require Offline Game Vault Core 0.19.7 or newer and probe the complete public
+  CLI contract before any Vault publication.
+- Add `ogv-import check-core` and a live cross-repository compatibility test
+  that imports, discovers and materializes a game plus optional content.
+- Make `game-source` with `adapter=other` the only profile emitted by the
+  importer; backend and runner selection are exclusively materialization-time
+  decisions.
+- Remove the retired `profile.status` field so imported capsules are accepted
+  by the current Offline Game Vault GUI catalog.
+- Add the GUI action **Preparar, verificar e importar automáticamente**, which
+  runs prepare, workspace verification, dry-run and transactional commit.
+- Generalize the prepared source declaration from Steam-only wording to any
+  store-independent folder while retaining the v4 compatibility field.
+- Record the probed Core version, source and required command set in the import
+  receipt.
+- Replace the obsolete backend-profile editor with an explicit neutral-source
+  explanation and keep optional runners unbound.
+
 ## 0.4.2 — 2026-08-21
 
 - Publish present `supplemental_content` as first-class immutable objects and

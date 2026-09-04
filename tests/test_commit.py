@@ -35,7 +35,11 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 if "--version" in sys.argv:
-    print("offline-game-vault 0.9.0-fake")
+    print("offline-game-vault 0.19.7-fake")
+    raise SystemExit(0)
+
+if "--help" in sys.argv:
+    print("usage: fake-core")
     raise SystemExit(0)
 
 command = sys.argv[1]
@@ -382,7 +386,7 @@ class CommitTests(unittest.TestCase):
             plan_path = workspace / "IMPORT_PLAN.json"
             plan = json.loads(plan_path.read_text())
             plan["runner"].update({
-                "binding": "preferred",
+                "binding": "select-at-materialization",
                 "source_path": str(runner),
                 "preferred_id": "proton9",
                 "sha256": None,
@@ -431,10 +435,8 @@ class CommitTests(unittest.TestCase):
             capsule = json.loads(
                 (vault / f"02_CAPSULES/{capsule_id}/capsule.json").read_text()
             )
-            self.assertEqual(
-                {profile["status"] for profile in capsule["profiles"]},
-                {"candidate", "not_tested"},
-            )
+            self.assertEqual(len(capsule["profiles"]), 1)
+            self.assertNotIn("status", capsule["profiles"][0])
             manifest = json.loads(
                 (
                     vault

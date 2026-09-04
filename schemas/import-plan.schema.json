@@ -220,33 +220,19 @@
       "items": {
         "properties": {
           "adapter": {
-            "enum": [
-              "bottles",
-              "wine",
-              "umu",
-              "windows",
-              "other"
-            ]
+            "const": "other"
           },
           "enabled": {
-            "type": "boolean"
+            "const": true
           },
           "id": {
-            "$ref": "#/$defs/portableId"
+            "const": "game-source"
           },
           "platform": {
-            "enum": [
-              "linux",
-              "windows"
-            ]
+            "const": "linux"
           },
           "status": {
-            "enum": [
-              "candidate",
-              "experimental",
-              "not_tested",
-              "unavailable"
-            ]
+            "const": "candidate"
           }
         },
         "required": [
@@ -258,18 +244,14 @@
         ],
         "type": "object"
       },
+      "maxItems": 1,
       "minItems": 1,
       "type": "array"
     },
     "runner": {
       "properties": {
         "binding": {
-          "enum": [
-            "select-at-materialization",
-            "preferred",
-            "fixed",
-            "none"
-          ]
+          "const": "select-at-materialization"
         },
         "preferred_id": {
           "type": [
@@ -324,6 +306,9 @@
         "steam_independent": {
           "const": true
         },
+        "store_client_independent": {
+          "const": true
+        },
         "third_party_drm": {
           "const": "declared-absent"
         },
@@ -333,6 +318,7 @@
       },
       "required": [
         "type",
+        "store_client_independent",
         "steam_independent",
         "legitimate_source",
         "third_party_drm",

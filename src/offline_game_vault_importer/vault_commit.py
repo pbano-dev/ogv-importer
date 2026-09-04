@@ -17,7 +17,7 @@ from typing import Any, Iterator
 import uuid
 
 from . import __version__
-from .core_bridge import core_version, run_core_json
+from .core_bridge import probe_core, run_core_json
 from .errors import ImporterError
 from .planner import (
     public_plan,
@@ -1054,7 +1054,6 @@ def _capsule_document(
                 "adapter": (
                     "other" if item.get("id") == "game-source" else adapter
                 ),
-                "status": item.get("status", "candidate"),
                 "dependencies": dependencies,
                 "host_contract": contract,
                 "launch": {
@@ -1617,6 +1616,7 @@ def commit_workspace(
     )
     require_prepared_plan_contract(raw_plan)
     plan = validate_plan(raw_plan, phase="commit")
+    core_probe = probe_core(plan)
     verification = verify_workspace(workspace)
     if verification.get("status") != "verified":
         raise ImporterError("el workspace no está verificado")
@@ -2050,7 +2050,8 @@ def commit_workspace(
             "capsule_id": capsule_id,
             "created_at": timestamp,
             "importer_version": __version__,
-            "core_version": core_version(plan),
+            "core_version": core_probe.version,
+            "core_contract": core_probe.to_dict(),
             "source_workspace": {
                 "neutral_object_sha256": game_digest,
                 "prepare_receipt_sha256": sha256_file(
@@ -2262,6 +2263,7 @@ def commit_workspace(
             "status": "candidate-imported",
             "operation_id": operation_id,
             "capsule_id": capsule_id,
+            "core_contract": core_probe.to_dict(),
             "game_object_sha256": game_digest,
             "runner": (
                 runner_object["id"] if runner_object is not None else None

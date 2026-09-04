@@ -176,9 +176,9 @@ if Gtk is not None:
             _, box = self._page("Origen")
             note = Gtk.Label(
                 label=(
-                    "Seleccione un directorio de juego ya funcional sin Steam. "
-                    "El prefix, runner, partidas, contenido adicional y documentación "
-                    "son opcionales."
+                    "Seleccione un directorio de juego ya funcional y aislado "
+                    "de cualquier tienda. Partidas, contenido adicional y "
+                    "documentación son opcionales."
                 )
             )
             note.set_wrap(True)
@@ -191,6 +191,10 @@ if Gtk is not None:
             )
             self._path_row(box, "manual_prefix", "Prefix inicial (opcional)", folder=True)
             self._path_row(box, "core_root", "Checkout del núcleo", folder=True)
+
+            core_check = Gtk.Button(label="Comprobar Core 0.19.7+")
+            core_check.connect("clicked", self._check_core)
+            box.append(core_check)
 
             actions = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL,
@@ -238,7 +242,9 @@ if Gtk is not None:
 
         def _build_components_page(self) -> None:
             _, box = self._page("Componentes")
-            runner_frame = Gtk.Frame(label="Runner o runtime")
+            runner_frame = Gtk.Frame(
+                label="Runner adicional a preservar (opcional)"
+            )
             runner_box = Gtk.Box(
                 orientation=Gtk.Orientation.VERTICAL, spacing=8
             )
@@ -254,15 +260,20 @@ if Gtk is not None:
             )
             binding_row.append(Gtk.Label(label="Vinculación"))
             self.runner_binding = Gtk.DropDown.new_from_strings(
-                [
-                    "select-at-materialization",
-                    "preferred",
-                    "fixed",
-                    "none",
-                ]
+                ["select-at-materialization"]
             )
             binding_row.append(self.runner_binding)
             runner_box.append(binding_row)
+            runner_note = Gtk.Label(
+                label=(
+                    "El runner se conserva como objeto reutilizable, pero no "
+                    "queda vinculado al juego. La GUI oficial lo seleccionará "
+                    "durante la materialización."
+                )
+            )
+            runner_note.set_xalign(0)
+            runner_note.set_wrap(True)
+            runner_box.append(runner_note)
             self._path_row(
                 runner_box, "runner_source", "Runner (archivo o directorio)", folder=None
             )
@@ -292,6 +303,9 @@ if Gtk is not None:
             self._field(extra_grid, 0, "supplemental_id", "ID")
             self._field(
                 extra_grid, 1, "supplemental_class", "Clasificación"
+            )
+            self.entries["supplemental_class"].set_placeholder_text(
+                "soundtrack, artbook, manual, wallpapers…"
             )
             add = Gtk.Button(label="Añadir contenido")
             add.connect("clicked", self._add_supplemental)
@@ -391,47 +405,20 @@ if Gtk is not None:
             box.append(self.state_list)
 
         def _build_profiles_page(self) -> None:
-            _, box = self._page("Perfiles")
+            _, box = self._page("Fuente neutral")
             self.profile_checks: dict[str, Gtk.CheckButton] = {}
             self.profile_entries: dict[str, Gtk.Entry] = {}
-            for adapter, label in (
-                ("bottles", "Bottles"),
-                ("wine", "Direct-Wine"),
-                ("umu", "UMU/Proton"),
-                ("windows", "Windows nativo"),
-            ):
-                row = Gtk.Box(
-                    orientation=Gtk.Orientation.HORIZONTAL,
-                    spacing=8,
-                )
-                check = Gtk.CheckButton(label=label)
-                self.profile_checks[adapter] = check
-                row.append(check)
-                entry = Gtk.Entry()
-                entry.set_hexpand(True)
-                entry.set_placeholder_text(
-                    {
-                        "bottles": "linux-bottles-flatpak",
-                        "wine": "linux-direct-wine",
-                        "umu": "linux-umu-proton",
-                        "windows": "windows-native",
-                    }[adapter]
-                )
-                self.profile_entries[adapter] = entry
-                row.append(entry)
-                box.append(row)
             note = Gtk.Label(
                 label=(
-                    "Los ID son editables. La importación solo publica candidate o "
-                    "not_tested; nunca verified."
+                    "La importación publica únicamente el perfil neutral "
+                    "game-source. Bottles, Direct-Wine y UMU/Proton no se "
+                    "eligen aquí: la GUI oficial y el Core los compondrán más "
+                    "tarde con el runner preservado que seleccione el usuario."
                 )
             )
             note.set_xalign(0)
             note.set_wrap(True)
             box.append(note)
-            apply_button = Gtk.Button(label="Aplicar perfiles")
-            apply_button.connect("clicked", self._apply_profiles)
-            box.append(apply_button)
 
         def _build_commit_page(self) -> None:
             _, box = self._page("Validar e importar")
@@ -466,6 +453,12 @@ if Gtk is not None:
             self.commit_button.set_sensitive(False)
             actions.append(self.commit_button)
             box.append(actions)
+            self.automatic_button = Gtk.Button(
+                label="Preparar, verificar e importar automáticamente"
+            )
+            self.automatic_button.add_css_class("suggested-action")
+            self.automatic_button.connect("clicked", self._automatic_import)
+            box.append(self.automatic_button)
 
         def _choose_path(self, entry: Gtk.Entry, *, folder: bool) -> None:
             dialog = Gtk.FileChooserNative(
@@ -576,7 +569,11 @@ if Gtk is not None:
                 "title": identity.get("title", ""),
                 "edition": identity.get("edition", ""),
                 "store": identity.get("source_store", ""),
-                "appid": str(identity.get("appid", "")),
+                "appid": (
+                    ""
+                    if identity.get("appid") is None
+                    else str(identity.get("appid"))
+                ),
                 "version": identity.get("preserved_version", ""),
                 "capsule_id": identity.get("capsule_id", ""),
                 "entrypoint": layout.get("entrypoint", ""),
@@ -609,15 +606,7 @@ if Gtk is not None:
                 self.entries["supplemental_id"].set_placeholder_text(
                     supplemental_examples.get("artbook", "")
                 )
-            bindings = [
-                "select-at-materialization", "preferred", "fixed", "none"
-            ]
-            try:
-                self.runner_binding.set_selected(
-                    bindings.index(plan["runner"].get("binding"))
-                )
-            except ValueError:
-                self.runner_binding.set_selected(0)
+            self.runner_binding.set_selected(0)
             baseline_values = ["embedded-or-unknown", "clean"]
             try:
                 self.baseline_state.set_selected(
@@ -689,11 +678,8 @@ if Gtk is not None:
 
         def _apply_runner(self, _button=None) -> None:
             try:
-                bindings = [
-                    "select-at-materialization", "preferred", "fixed", "none"
-                ]
                 self.session.set_runner(
-                    binding=bindings[self.runner_binding.get_selected()],
+                    binding="select-at-materialization",
                     source_path=self._entry("runner_source") or None,
                     preferred_id=self._entry("runner_id") or None,
                     digest=self._entry("runner_sha256") or None,
@@ -853,6 +839,7 @@ if Gtk is not None:
             self.verify_button.set_sensitive(prepared)
             self.dry_button.set_sensitive(prepared)
             self.commit_button.set_sensitive(prepared)
+            self.automatic_button.set_sensitive(self.session.plan is not None)
 
         def _refresh(self) -> None:
             plan = self.session.plan
@@ -921,6 +908,13 @@ if Gtk is not None:
                 lambda: self.session.inspect_game(Path(game), title=title),
             )
 
+        def _check_core(self, _button=None) -> None:
+            self._sync_paths()
+            self._run_background(
+                "Contrato del Core",
+                self.session.check_core,
+            )
+
         def _prepare_manual(self, _button=None) -> None:
             if self.session.plan is None:
                 self.status.set_text(
@@ -987,6 +981,33 @@ if Gtk is not None:
             self._run_background(
                 label,
                 lambda: self.session.commit(dry_run=dry_run),
+            )
+
+        def _automatic_import(self, _button=None) -> None:
+            if self.session.plan is None:
+                self.status.set_text(
+                    "Inspeccione primero el directorio para crear el plan."
+                )
+                return
+            self._apply_identity()
+            self._apply_runner()
+            self._apply_profiles()
+            self._sync_paths()
+            game = self._entry("manual_game")
+            prefix = self._entry("manual_prefix")
+            workspace = self.session.workspace
+            if not game or workspace is None or self.session.vault is None:
+                self.status.set_text(
+                    "Indique juego, workspace nuevo y Vault de destino."
+                )
+                return
+            self._run_background(
+                "Importación automática",
+                lambda: self.session.import_prepared_game(
+                    game=Path(game),
+                    prefix=Path(prefix) if prefix else None,
+                    workspace=workspace,
+                ),
             )
 
 
